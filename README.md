@@ -1,14 +1,67 @@
 # VNetAtlas
 
-VNetAtlas inventories Azure networking resources through Azure Resource Graph and creates
-a browsable draw.io atlas with a network overview, one page per virtual network, and
-optional detail pages for NSGs and route tables.
+**Map your Azure networks into an editable draw.io atlas without clicking through the portal.**
+
+## Why VNetAtlas
+
+As a security analyst, I've always found Azure network reviews tedious. In environments
+without consistent naming or structure, things get chaotic quickly, and working out how a
+network actually fits together can take a million clicks in the portal. More often than
+not, I ended up drawing the network in draw.io by hand.
+
+draw.io files are just XML, so I wondered how much of that drawing I could automate.
+VNetAtlas is the answer. It signs in with the Az PowerShell modules, runs a set of KQL
+queries against Azure Resource Graph, and writes the diagram I used to draw by hand:
+VNets, subnets, peerings, the resources inside them, and everything attached to them, from
+gateways and public IPs to NSGs with their full rule sets.
+
+## A tour of the atlas
+
+One command produces a single `.drawio` file that reads like an atlas: start with the big
+picture and click your way down to the details.
+
+**1. Network overview.** Every VNet, grouped by subscription, with its address space,
+region, and peerings. Click a VNet to open its page.
+
+**2. One page per VNet.** Subnets are drawn as containers holding what lives in them:
+VMs, NICs, scale sets, private endpoints, and VNet-injected services such as Container Apps
+environments. Around the VNet, three lanes show what it connects to:
+
+- **Security & routing:** NSGs and route tables
+- **Azure connectivity:** public IPs, NAT gateways, load balancers, application gateways,
+  Azure Firewalls, VPN/ExpressRoute gateways, and Bastion hosts
+- **Remote & hybrid:** peered VNets, on-premises gateways, ExpressRoute circuits, and
+  Virtual WAN hubs
+
+Labels carry the details you would otherwise look up one blade at a time, such as VM size,
+private IPs, public IP SKU and FQDN, subnet delegations, and private endpoint state. Hover
+over any shape to see its Azure resource ID.
 
 ![VNetAtlas Subnet View](assets/vnetatlas-overview.png)
 *VNet page showing subnet containment and connected Azure resources.*
 
+**3. NSG and route-table pages.** Click an NSG to see its rules laid out the way the portal
+lists them: inbound and outbound, custom and default, with application security groups
+resolved and each rule's description shown on hover. Route tables get the same treatment.
+
 ![VNetAtlas NSG View](assets/vnetatlas-nsg.png)
 *NSG detail page showing inbound and outbound security rules.*
+
+**4. Unmapped Resources.** Anything VNetAtlas found but could not tie to a VNet through a
+relationship Azure actually reports, such as a public IP or an NSG that is not attached to
+anything. VNetAtlas lists these instead of guessing where they belong, and they are often
+worth a second look in a review.
+
+The output is plain, uncompressed draw.io XML, so the atlas is a starting point rather than
+a finished picture. Move shapes around, annotate your findings, or hide connector types
+with draw.io layers.
+
+## Made for reviews
+
+- **Read-only.** VNetAtlas runs Resource Graph queries and nothing else. Reader access is
+  enough.
+- **Focus on what matters.** Narrow large tenants with `-VnetName`, `-ResourceGroup`, or
+  `-ExcludeSubscriptionId`.
 
 ## Quick start
 
@@ -24,27 +77,6 @@ Connect-AzAccount
 The command queries every enabled subscription available in the current tenant and creates
 a timestamped `*_Azure-Network.drawio` file in the current directory. Open it in the draw.io
 desktop application or at [app.diagrams.net](https://app.diagrams.net/).
-
-## Key capabilities
-
-- A network overview grouped by subscription, with links to individual VNet pages
-- VNets and subnets containing their associated VMs, scale sets, NICs, and private endpoints
-- Public IPs and prefixes, NAT gateways, load balancers, application gateways, Azure Firewalls, VPN
-  gateways, Bastion hosts, and hybrid or Virtual WAN connectivity
-- NSG, route-table, peering, backend, gateway, and other discovered relationships
-- Optional detail pages for NSG rules, including application security group endpoints, and route-table routes
-- An `Unmapped Resources` page for supported resources without a defensible VNet relationship
-- Azure resource IDs stored as shape metadata and shown on hover
-- Filterable tags and separate draw.io layers for connector classes
-- Clickable VNet, NSG, and route-table shapes for navigation between pages
-- Dynamic page sizing and editable, uncompressed draw.io XML
-
-Resource labels include useful Azure metadata where available, such as VM size and OS,
-private IP allocation, public IP SKU/FQDN, rule and route counts, gateway properties,
-private endpoint state, and subnet delegation.
-
-NSG detail tables show source and destination ports, address prefixes or application
-security groups, and expose a rule's Azure description as a hover tooltip.
 
 ## Parameters
 
@@ -93,7 +125,8 @@ Export only matching VNets:
     -OutputPath .\hub.drawio
 ```
 
-Save the normalized results and regenerate the atlas offline:
+Save the query results as JSON, so you can later rebuild the atlas with different options
+(for example a single VNet or no default NSG rules) without querying Azure again:
 
 ```powershell
 .\Export-VNetAtlas.ps1 `
