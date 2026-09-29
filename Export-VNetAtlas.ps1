@@ -117,7 +117,7 @@
     outside the current scope.
 
 .LINK
-    https://app.diagrams.net/
+    https://github.com/zh54321/VNetAtlas
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Azure')]
@@ -179,9 +179,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Semantic version of the exporter. Surfaced in the banner and stamped into the
-# mxfile so a generated diagram records which build produced it.
-$script:VNetAtlasVersion = '1.0.0'
+# Date-based version of the exporter (VYYYYMMDD). Surfaced in the banner and
+# stamped into the mxfile so a generated diagram records which build produced it.
+$script:VNetAtlasVersion = 'V20260929'
 
 # Progress goes to the host stream so the single stdout summary line stays the
 # script's only pipeline output.
@@ -211,7 +211,7 @@ function Write-StatusBanner {
 |___/_/ |_/\___/\__/_/  |_\__/_/\__,_/____/
 '@
     foreach ($line in ($banner -split "`r?`n")) { Write-StatusMessage $line 'Cyan' }
-    Write-StatusMessage "Azure network maps for draw.io   v$script:VNetAtlasVersion" 'DarkGray'
+    Write-StatusMessage "Azure network maps for draw.io   $script:VNetAtlasVersion" 'DarkGray'
     Write-StatusMessage ''
 }
 
@@ -410,8 +410,7 @@ function Invoke-ResourceGraphPaged {
             $dataProperty = $response.PSObject.Properties['Data']
             if ($null -ne $dataProperty) {
                 $page = @($dataProperty.Value)
-            }
-            else {
+            } else {
                 $page = @($response)
             }
         }
@@ -476,8 +475,7 @@ function Get-AzureNetworkData {
         }
         Write-Verbose "No -SubscriptionId was supplied; querying all $($Subscriptions.Count) enabled subscription(s) in tenant '$tenantId'."
         $selectionNote = 'all enabled'
-    }
-    else {
+    } else {
         $Subscriptions = @($Subscriptions | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } |
             Where-Object { $_ } | Sort-Object -Unique)
         $availableIds = @($availableSubscriptions | ForEach-Object { ([string]$_.Id).ToLowerInvariant() })
@@ -1021,8 +1019,9 @@ function Get-IdsFromJson {
         foreach ($property in $Item.PSObject.Properties) {
             if ($property.Name -eq 'id' -and $property.Value) {
                 $null = $ids.Add((ConvertTo-ResourceId $property.Value))
+            } else {
+                Add-ObjectId $property.Value
             }
-            else { Add-ObjectId $property.Value }
         }
     }
 
@@ -2791,8 +2790,7 @@ try {
         $resolvedInput = (Resolve-Path -LiteralPath $InputDataPath).Path
         $networkData = Get-Content -LiteralPath $resolvedInput -Raw | ConvertFrom-Json
         Write-StatusDetail $resolvedInput
-    }
-    else {
+    } else {
         Write-StatusStep 1 3 'Querying Azure Resource Graph'
         $networkData = Get-AzureNetworkData -Subscriptions $SubscriptionId -RequestedTenantId $TenantId
         if ($ExportDataPath) {
