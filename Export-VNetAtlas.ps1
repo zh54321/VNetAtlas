@@ -19,6 +19,10 @@
     across repeat runs and across Windows PowerShell 5.1 and PowerShell 7, apart from the
     mxfile 'modified' timestamp.
 
+    Firewall policy rules are not available through Resource Graph. They are read from
+    Azure Resource Manager for each policy attached to a firewall and for the parent
+    policies it inherits from, unless -SkipFirewallRules is set.
+
     The Az.Accounts and Az.ResourceGraph modules and at least Reader access to the
     queried subscriptions are required. Neither module is needed with -InputDataPath.
 
@@ -49,7 +53,13 @@
     Drop virtual networks belonging to these subscriptions. Applied after -SubscriptionId.
 
 .PARAMETER SkipRuleDetailPages
-    Omit the per-NSG and per-route-table detail pages.
+    Omit the per-NSG, per-route-table, and per-firewall-policy detail pages. Firewall
+    policy rules are still collected, so -ExportDataPath keeps them.
+
+.PARAMETER SkipFirewallRules
+    Do not read firewall policy rules and omit the firewall policy detail pages. Rules
+    are read from Azure Resource Manager with at least two requests per policy, so this
+    switch removes those requests.
 
 .PARAMETER SkipDefaultNsgRules
     Omit Azure's built-in default security rules from NSG detail pages, leaving only the
@@ -154,6 +164,10 @@ param(
 
     [Parameter(ParameterSetName = 'Azure')]
     [Parameter(ParameterSetName = 'Input')]
+    [switch]$SkipFirewallRules,
+
+    [Parameter(ParameterSetName = 'Azure')]
+    [Parameter(ParameterSetName = 'Input')]
     [switch]$SkipDefaultNsgRules,
 
     [Parameter(ParameterSetName = 'Azure')]
@@ -181,7 +195,10 @@ $ErrorActionPreference = 'Stop'
 
 # Date-based version of the exporter (VYYYYMMDD). Surfaced in the banner and
 # stamped into the mxfile so a generated diagram records which build produced it.
-$script:VNetAtlasVersion = 'V20260929'
+$script:VNetAtlasVersion = 'V20260930'
+
+# API version for every direct Azure Resource Manager read of firewall policy data.
+$script:FirewallPolicyApiVersion = '2024-05-01'
 
 # Progress goes to the host stream so the single stdout summary line stays the
 # script's only pipeline output.
@@ -288,7 +305,8 @@ OUTPUT
   -OutputPath <file>             Target .drawio file. Default: .\<yyyyMMdd_HHmm>_Azure-Network.drawio
   -ExportDataPath <file>         Also save the normalized query results as JSON.
   -ResourcesPerRow <1-4>         Resources per line inside a subnet. Default: 2.
-  -SkipRuleDetailPages           Omit the per-NSG and per-route-table detail pages.
+  -SkipRuleDetailPages           Omit the NSG, route-table, and firewall-policy detail pages.
+  -SkipFirewallRules             Do not read firewall policy rules or build their pages.
   -SkipDefaultNsgRules           Omit Azure's built-in default rules from NSG pages.
   -Quiet                         Suppress the banner and progress output.
 
@@ -444,8 +462,189 @@ function Write-ExpandLimitWarning {
     }
 }
 
+function Invoke-ArmGetRequest {
+    param([Parameter(Mandatory)][string]$Target)
+
+    # The only place this script reads Azure Resource Manager directly. Accepts a
+    # resource path or an absolute nextLink. The returned error is short by
+    # design: it never carries the response body, headers, or token material.
+    $parameters = @{ Method = 'GET'; ErrorAction = 'Stop' }
+    if ($Target -match '^https?://') {
+        $parameters.Uri = $Target
+    } else {
+        $parameters.Path = $Target
+    }
+    try {
+        $response = Invoke-AzRestMethod @parameters
+    }
+    catch {
+        $reason = @(([string]$_.Exception.Message -split "`r?`n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $text = 'Request failed'
+        if ($reason.Count -gt 0) { $text = "Request failed: $($reason[0].Trim())" }
+        if ($text.Length -gt 300) { $text = $text.Substring(0, 300) }
+        return [pscustomobject]@{ Content = $null; Error = $text }
+    }
+
+    $statusCode = [int]$response.StatusCode
+    $content = $null
+    try { $content = [string]$response.Content | ConvertFrom-Json } catch { $content = $null }
+    if ($statusCode -lt 200 -or $statusCode -ge 300) {
+        $serviceError = Get-ObjectValue $content 'error' $null
+        $detail = @(
+            [string](Get-ObjectValue $serviceError 'code' ''),
+            [string](Get-ObjectValue $serviceError 'message' '')
+        ) | Where-Object { $_ }
+        $text = "HTTP $statusCode"
+        if (@($detail).Count -gt 0) { $text = "HTTP $statusCode - $(@($detail) -join ': ')" }
+        if ($text.Length -gt 300) { $text = $text.Substring(0, 300) }
+        return [pscustomobject]@{ Content = $null; Error = $text }
+    }
+    if ($null -eq $content) {
+        return [pscustomobject]@{ Content = $null; Error = "HTTP $statusCode with unreadable content" }
+    }
+    return [pscustomobject]@{ Content = $content; Error = '' }
+}
+
+function Get-FirewallPolicyData {
+    param([object[]]$FirewallRows)
+
+    # Resource Graph does not return firewall policy rules, so every policy in
+    # use, and every parent policy it inherits from, is read from ARM.
+    $pending = [System.Collections.Generic.Queue[string]]::new()
+    $visitedPolicyIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $attachedPolicyIds = @($FirewallRows | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'firewallPolicyId' '') } |
+        Where-Object { $_ } | Sort-Object -Unique)
+    foreach ($policyId in $attachedPolicyIds) {
+        if ($visitedPolicyIds.Add($policyId)) { $pending.Enqueue($policyId) }
+    }
+
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $requestCount = 0
+    while ($pending.Count -gt 0) {
+        $policyId = $pending.Dequeue()
+        $policyName = Get-ResourceNameFromId $policyId
+        Write-StatusProgress 'Reading firewall policies' $policyName $rows.Count $visitedPolicyIds.Count
+
+        $metadataError = ''
+        $policy = $null
+        $metadata = Invoke-ArmGetRequest "${policyId}?api-version=$script:FirewallPolicyApiVersion"
+        $requestCount++
+        if ($metadata.Error) {
+            $metadataError = $metadata.Error
+            Write-Warning "Firewall policy '$policyName': settings could not be read ($metadataError)."
+        } else {
+            $policy = $metadata.Content
+        }
+        $properties = Get-ObjectValue $policy 'properties' $null
+        $basePolicyId = ConvertTo-ResourceId (Get-ObjectValue (Get-ObjectValue $properties 'basePolicy' $null) 'id' '')
+        if ($basePolicyId -and $visitedPolicyIds.Add($basePolicyId)) { $pending.Enqueue($basePolicyId) }
+
+        # Rules are kept only when every page was read, so a partial result can
+        # never be mistaken for the complete rule set.
+        $groups = [System.Collections.Generic.List[object]]::new()
+        $ruleError = ''
+        $visitedLinks = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        $target = "${policyId}/ruleCollectionGroups?api-version=$script:FirewallPolicyApiVersion"
+        while ($target) {
+            if (-not $visitedLinks.Add($target)) {
+                $ruleError = 'Pagination returned a repeated link'
+                break
+            }
+            $page = Invoke-ArmGetRequest $target
+            $requestCount++
+            if ($page.Error) {
+                $ruleError = $page.Error
+                break
+            }
+            foreach ($group in @(Get-ObjectValue $page.Content 'value' @())) {
+                if ($null -ne $group) { $groups.Add($group) }
+            }
+            $target = [string](Get-ObjectValue $page.Content 'nextLink' '')
+        }
+        $ruleCollectionGroups = ''
+        if ($ruleError) {
+            Write-Warning "Firewall policy '$policyName': rules could not be read ($ruleError)."
+        } else {
+            # Groups and collections are sorted for stable output. Rule order
+            # inside a collection is meaningful and kept as returned.
+            $sortedGroups = @($groups | Sort-Object `
+                @{Expression={ [int](Get-ObjectValue (Get-ObjectValue $_ 'properties' $null) 'priority' 0) }},
+                @{Expression={ [string](Get-ObjectValue $_ 'name' '') }},
+                @{Expression={ ConvertTo-ResourceId (Get-ObjectValue $_ 'id' '') }})
+            $normalizedGroups = @(foreach ($group in $sortedGroups) {
+                $groupProperties = Get-ObjectValue $group 'properties' $null
+                $collections = @(@(Get-ObjectValue $groupProperties 'ruleCollections' @()) | Where-Object { $null -ne $_ } | Sort-Object `
+                    @{Expression={ [int](Get-ObjectValue $_ 'priority' 0) }},
+                    @{Expression={ [string](Get-ObjectValue $_ 'name' '') }})
+                [pscustomobject][ordered]@{
+                    id = ConvertTo-ResourceId (Get-ObjectValue $group 'id' '')
+                    name = [string](Get-ObjectValue $group 'name' '')
+                    priority = [int](Get-ObjectValue $groupProperties 'priority' 0)
+                    ruleCollections = $collections
+                }
+            })
+            $ruleCollectionGroups = ConvertTo-Json -InputObject $normalizedGroups -Depth 100 -Compress
+        }
+
+        # Inspection and DNS settings stay null when the policy could not be read,
+        # so the page can tell "not reported" apart from "off" or "default".
+        $dnsSettings = Get-ObjectValue $properties 'dnsSettings' $null
+        $intrusionDetectionMode = $null
+        $signatureOverrideCount = $null
+        $bypassRuleCount = $null
+        $tlsInspectionEnabled = $null
+        $tlsCertificateName = ''
+        $dnsServers = $null
+        if ($null -ne $policy) {
+            $intrusionDetection = Get-ObjectValue $properties 'intrusionDetection' $null
+            $intrusionConfiguration = Get-ObjectValue $intrusionDetection 'configuration' $null
+            $intrusionDetectionMode = [string](Get-ObjectValue $intrusionDetection 'mode' 'Off')
+            $signatureOverrideCount = @(Get-ObjectValue $intrusionConfiguration 'signatureOverrides' @()).Count
+            $bypassRuleCount = @(Get-ObjectValue $intrusionConfiguration 'bypassTrafficSettings' @()).Count
+            $certificateAuthority = Get-ObjectValue (Get-ObjectValue $properties 'transportSecurity' $null) 'certificateAuthority' $null
+            $tlsInspectionEnabled = $null -ne $certificateAuthority
+            $tlsCertificateName = [string](Get-ObjectValue $certificateAuthority 'name' '')
+            $dnsServerList = @(@(Get-ObjectValue $dnsSettings 'servers' @()) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+            $dnsServers = ConvertTo-Json -InputObject $dnsServerList -Compress
+        }
+
+        $subscriptionId = ''
+        $resourceGroup = ''
+        if ($policyId -match '^/subscriptions/([^/]+)/resourcegroups/([^/]+)/') {
+            $subscriptionId = $Matches[1]
+            $resourceGroup = $Matches[2]
+        }
+        $rows.Add([pscustomobject][ordered]@{
+            id = $policyId
+            name = [string](Get-ObjectValue $policy 'name' $policyName)
+            resourceGroup = $resourceGroup
+            subscriptionId = $subscriptionId
+            location = [string](Get-ObjectValue $policy 'location' '')
+            tier = [string](Get-ObjectValue (Get-ObjectValue $properties 'sku' $null) 'tier' '')
+            threatIntelMode = [string](Get-ObjectValue $properties 'threatIntelMode' '')
+            dnsProxyEnabled = Get-ObjectValue $dnsSettings 'enableProxy' $null
+            dnsServers = $dnsServers
+            intrusionDetectionMode = $intrusionDetectionMode
+            intrusionDetectionSignatureOverrides = $signatureOverrideCount
+            intrusionDetectionBypassRules = $bypassRuleCount
+            tlsInspectionEnabled = $tlsInspectionEnabled
+            tlsInspectionCertificateName = $tlsCertificateName
+            basePolicyId = $basePolicyId
+            provisioningState = [string](Get-ObjectValue $properties 'provisioningState' '')
+            ruleCollectionGroups = $ruleCollectionGroups
+            metadataError = $metadataError
+            ruleError = $ruleError
+        })
+    }
+    Complete-StatusProgress 'Reading firewall policies'
+    return [pscustomobject]@{
+        Rows = @($rows | Sort-Object @{Expression={ [string]$_.name }}, @{Expression={ [string]$_.id }})
+        RequestCount = $requestCount
+    }
+}
+
 function Get-AzureNetworkData {
-    param([string[]]$Subscriptions, [string]$RequestedTenantId)
+    param([string[]]$Subscriptions, [string]$RequestedTenantId, [switch]$SkipFirewallRules)
 
     $requiredModules = @('Az.Accounts', 'Az.ResourceGraph')
     $missingModules = @($requiredModules | Where-Object { -not (Get-Module -ListAvailable -Name $_) })
@@ -653,7 +852,18 @@ Resources
           sku=tostring(properties.sku.name), tier=tostring(properties.sku.tier),
           subnetId=tolower(tostring(ipConfig.properties.subnet.id)),
           privateIpAddress=tostring(ipConfig.properties.privateIPAddress),
-          publicIpId=tolower(tostring(ipConfig.properties.publicIPAddress.id))
+          publicIpId=tolower(tostring(ipConfig.properties.publicIPAddress.id)),
+          managementSubnetId=tolower(tostring(properties.managementIpConfiguration.properties.subnet.id)),
+          managementPrivateIpAddress=tostring(properties.managementIpConfiguration.properties.privateIPAddress),
+          managementPublicIpId=tolower(tostring(properties.managementIpConfiguration.properties.publicIPAddress.id)),
+          managementIpConfigurationId=tolower(tostring(properties.managementIpConfiguration.id)),
+          firewallPolicyId=tolower(tostring(properties.firewallPolicy.id)),
+          threatIntelMode=tostring(properties.threatIntelMode),
+          zones=tostring(zones),
+          provisioningState=tostring(properties.provisioningState),
+          virtualHubId=tolower(tostring(properties.virtualHub.id)),
+          hubPrivateIpAddress=tostring(properties.hubIPAddresses.privateIPAddress),
+          hubPublicIpAddresses=tostring(properties.hubIPAddresses.publicIPs.addresses)
 | order by id asc
 '@
         privateEndpoints = @'
@@ -814,6 +1024,13 @@ Resources
     $queryTimer.Stop()
     Complete-StatusProgress 'Querying Azure Resource Graph'
     Write-StatusDetail "$($queryNames.Count) queries, $totalRows rows in $(Format-ElapsedTime $queryTimer.Elapsed)"
+    if (-not $SkipFirewallRules) {
+        $policyData = Get-FirewallPolicyData -FirewallRows $data['firewalls']
+        $data['firewallPolicies'] = @($policyData.Rows)
+        if ($policyData.RequestCount -gt 0) {
+            Write-StatusDetail "$(@($policyData.Rows).Count) firewall policies, $($policyData.RequestCount) ARM requests"
+        }
+    }
     return [pscustomobject]$data
 }
 
@@ -1054,7 +1271,8 @@ function Get-SubnetOccupantId {
     $vmssMatch = [regex]::Match($value, '(?i)^(.*?/providers/microsoft\.compute/virtualmachinescalesets/[^/]+)/virtualmachines/')
     if ($vmssMatch.Success) { return $vmssMatch.Groups[1].Value }
     foreach ($segment in @('/ipConfigurations/', '/bastionHostIpConfigurations/', '/frontendIPConfigurations/',
-                           '/gatewayIPConfigurations/', '/ipConfigurationProfiles/')) {
+                           '/gatewayIPConfigurations/', '/azureFirewallIpConfigurations/',
+                           '/ipConfigurationProfiles/')) {
         $index = $value.IndexOf($segment, [System.StringComparison]::OrdinalIgnoreCase)
         if ($index -gt 0) { return $value.Substring(0, $index) }
     }
@@ -1161,7 +1379,8 @@ function Get-VmssNetworkRelation {
 
 function Get-ApplicationGatewayRelation {
     param([object[]]$Rows)
-    $subnetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $deploymentSubnetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $frontendSubnetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $publicIpIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $privateIpAddresses = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $frontendNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -1169,14 +1388,14 @@ function Get-ApplicationGatewayRelation {
         $legacySubnetId = ConvertTo-ResourceId (Get-ObjectValue $row 'subnetId' '')
         $legacyPublicIpId = ConvertTo-ResourceId (Get-ObjectValue $row 'publicIpId' '')
         $legacyFrontendName = [string](Get-ObjectValue $row 'frontendName' '')
-        if ($legacySubnetId) { $null = $subnetIds.Add($legacySubnetId) }
+        if ($legacySubnetId) { $null = $deploymentSubnetIds.Add($legacySubnetId) }
         if ($legacyPublicIpId) { $null = $publicIpIds.Add($legacyPublicIpId) }
         if ($legacyFrontendName) { $null = $frontendNames.Add($legacyFrontendName) }
         foreach ($configuration in @(ConvertFrom-JsonCollection (Get-ObjectValue $row 'gatewayIpConfigurations' ''))) {
             $properties = Get-ObjectValue $configuration 'properties' $null
             $subnet = Get-ObjectValue $properties 'subnet' $null
             $subnetId = ConvertTo-ResourceId (Get-ObjectValue $subnet 'id' '')
-            if ($subnetId) { $null = $subnetIds.Add($subnetId) }
+            if ($subnetId) { $null = $deploymentSubnetIds.Add($subnetId) }
         }
         foreach ($frontend in @(ConvertFrom-JsonCollection (Get-ObjectValue $row 'frontendIpConfigurations' ''))) {
             $frontendName = [string](Get-ObjectValue $frontend 'name' '')
@@ -1188,16 +1407,53 @@ function Get-ApplicationGatewayRelation {
             $privateIpAddress = [string](Get-ObjectValue $properties 'privateIPAddress' '')
             if ($frontendName) { $null = $frontendNames.Add($frontendName) }
             if ($publicIpId) { $null = $publicIpIds.Add($publicIpId) }
-            if ($subnetId) { $null = $subnetIds.Add($subnetId) }
+            if ($subnetId) { $null = $frontendSubnetIds.Add($subnetId) }
             if ($privateIpAddress) { $null = $privateIpAddresses.Add($privateIpAddress) }
         }
+    }
+    $allSubnetIds = @(@($deploymentSubnetIds) + @($frontendSubnetIds) | Sort-Object -Unique)
+    return [pscustomobject]@{
+        Rows=$Rows
+        SubnetIds=$allSubnetIds
+        DeploymentSubnetIds=@($deploymentSubnetIds | Sort-Object)
+        FrontendSubnetIds=@($frontendSubnetIds | Sort-Object)
+        PublicIpIds=@($publicIpIds | Sort-Object)
+        PrivateIpAddresses=@($privateIpAddresses | Sort-Object)
+        FrontendNames=@($frontendNames | Sort-Object)
+    }
+}
+
+function Get-ExpandedServiceRelation {
+    param([object[]]$Rows)
+
+    $subnetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $publicIpIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $privateIpAddresses = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $managementSubnetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $managementPublicIpIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $managementPrivateIpAddresses = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($row in $Rows) {
+        $subnetId = ConvertTo-ResourceId (Get-ObjectValue $row 'subnetId' '')
+        $publicIpId = ConvertTo-ResourceId (Get-ObjectValue $row 'publicIpId' '')
+        $privateIpAddress = [string](Get-ObjectValue $row 'privateIpAddress' '')
+        $managementSubnetId = ConvertTo-ResourceId (Get-ObjectValue $row 'managementSubnetId' '')
+        $managementPublicIpId = ConvertTo-ResourceId (Get-ObjectValue $row 'managementPublicIpId' '')
+        $managementPrivateIpAddress = [string](Get-ObjectValue $row 'managementPrivateIpAddress' '')
+        if ($subnetId) { $null = $subnetIds.Add($subnetId) }
+        if ($publicIpId) { $null = $publicIpIds.Add($publicIpId) }
+        if ($privateIpAddress) { $null = $privateIpAddresses.Add($privateIpAddress) }
+        if ($managementSubnetId) { $null = $managementSubnetIds.Add($managementSubnetId) }
+        if ($managementPublicIpId) { $null = $managementPublicIpIds.Add($managementPublicIpId) }
+        if ($managementPrivateIpAddress) { $null = $managementPrivateIpAddresses.Add($managementPrivateIpAddress) }
     }
     return [pscustomobject]@{
         Rows=$Rows
         SubnetIds=@($subnetIds | Sort-Object)
         PublicIpIds=@($publicIpIds | Sort-Object)
         PrivateIpAddresses=@($privateIpAddresses | Sort-Object)
-        FrontendNames=@($frontendNames | Sort-Object)
+        ManagementSubnetIds=@($managementSubnetIds | Sort-Object)
+        ManagementPublicIpIds=@($managementPublicIpIds | Sort-Object)
+        ManagementPrivateIpAddresses=@($managementPrivateIpAddresses | Sort-Object)
     }
 }
 
@@ -1216,6 +1472,9 @@ function New-NetworkDataIndex {
         LocalNetworkGatewayById=(New-ResourceMap (Get-DataRows $Data 'localNetworkGateways'))
         ExpressRouteCircuitById=(New-ResourceMap (Get-DataRows $Data 'expressRouteCircuits'))
         VirtualHubById=(New-ResourceMap (Get-DataRows $Data 'virtualHubs'))
+        FirewallPolicyById=(New-ResourceMap (Get-DataRows $Data 'firewallPolicies'))
+        FirewallIdsByPolicyId=@{}
+        ChildPolicyIdsByBasePolicyId=@{}
         SubnetsByVnetId=@{}
         SubnetsByNsgId=@{}
         SubnetsByRouteTableId=@{}
@@ -1235,11 +1494,35 @@ function New-NetworkDataIndex {
         LoadBalancerIdsByVnetId=@{}
         HubConnectionsByVnetId=@{}
         ExpressRouteGatewaysByHubId=@{}
+        PublicIpByIpConfigurationId=@{}
+        SubnetReferencesByOccupantId=@{}
+        FirewallRelationById=@{}
+        FirewallIdsBySubnetId=@{}
+        FirewallIdsByHubId=@{}
+        GatewayRelationById=@{}
+        GatewayIdsBySubnetId=@{}
+        BastionRelationById=@{}
+        BastionIdsBySubnetId=@{}
+    }
+    foreach ($publicIp in Get-DataRows $Data 'publicIps') {
+        $ipConfigurationId = ConvertTo-ResourceId (Get-ObjectValue $publicIp 'ipConfigurationId' '')
+        if ($ipConfigurationId) { $index.PublicIpByIpConfigurationId[$ipConfigurationId] = $publicIp }
     }
     foreach ($subnet in Get-DataRows $Data 'subnets') {
+        $subnetId = ConvertTo-ResourceId (Get-ObjectValue $subnet 'id')
         Add-IndexValue $index.SubnetsByVnetId (ConvertTo-ResourceId (Get-ObjectValue $subnet 'vnetId')) $subnet
         Add-IndexValue $index.SubnetsByNsgId (ConvertTo-ResourceId (Get-ObjectValue $subnet 'nsgId')) $subnet
         Add-IndexValue $index.SubnetsByRouteTableId (ConvertTo-ResourceId (Get-ObjectValue $subnet 'routeTableId')) $subnet
+        foreach ($reference in @(ConvertFrom-JsonCollection (Get-ObjectValue $subnet 'ipConfigurations' ''))) {
+            $referenceId = ConvertTo-ResourceId (Get-ObjectValue $reference 'id' '')
+            $occupantId = ConvertTo-ResourceId (Get-SubnetOccupantId $referenceId)
+            if (-not $referenceId -or -not $occupantId) { continue }
+            Add-IndexValue $index.SubnetReferencesByOccupantId $occupantId ([pscustomobject]@{
+                SubnetId=$subnetId
+                SubnetName=[string](Get-ObjectValue $subnet 'name' '')
+                ReferenceId=$referenceId
+            })
+        }
     }
     foreach ($nic in Get-DataRows $Data 'nics') {
         Add-IndexValue $index.NicRowsBySubnetId (ConvertTo-ResourceId (Get-ObjectValue $nic 'subnetId')) $nic
@@ -1267,7 +1550,70 @@ function New-NetworkDataIndex {
         $gatewayId = [string]$group.Name
         $relation = Get-ApplicationGatewayRelation @($group.Group)
         $index.ApplicationGatewayRelationById[$gatewayId] = $relation
-        foreach ($subnetId in $relation.SubnetIds) { Add-IndexValue $index.ApplicationGatewayIdsBySubnetId $subnetId $gatewayId }
+        foreach ($subnetId in $relation.DeploymentSubnetIds) { Add-IndexValue $index.ApplicationGatewayIdsBySubnetId $subnetId $gatewayId }
+    }
+    foreach ($group in @(Get-DataRows $Data 'firewalls' | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
+        $firewallId = [string]$group.Name
+        $baseRelation = Get-ExpandedServiceRelation @($group.Group)
+        $dataSubnetIds = [System.Collections.Generic.HashSet[string]]::new([string[]]$baseRelation.SubnetIds,[System.StringComparer]::OrdinalIgnoreCase)
+        $dataPublicIpIds = [System.Collections.Generic.HashSet[string]]::new([string[]]$baseRelation.PublicIpIds,[System.StringComparer]::OrdinalIgnoreCase)
+        $managementSubnetIds = [System.Collections.Generic.HashSet[string]]::new([string[]]$baseRelation.ManagementSubnetIds,[System.StringComparer]::OrdinalIgnoreCase)
+        $managementPublicIpIds = [System.Collections.Generic.HashSet[string]]::new([string[]]$baseRelation.ManagementPublicIpIds,[System.StringComparer]::OrdinalIgnoreCase)
+        $managementConfigurationIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($row in $group.Group) {
+            $configurationId = ConvertTo-ResourceId (Get-ObjectValue $row 'managementIpConfigurationId' '')
+            if ($configurationId) { $null = $managementConfigurationIds.Add($configurationId) }
+        }
+        foreach ($reference in @($index.SubnetReferencesByOccupantId[$firewallId])) {
+            if ($null -eq $reference) { continue }
+            $isManagement = [string]$reference.SubnetName -ieq 'AzureFirewallManagementSubnet'
+            if ($isManagement) {
+                $null = $managementSubnetIds.Add([string]$reference.SubnetId)
+                $null = $managementConfigurationIds.Add([string]$reference.ReferenceId)
+            } else {
+                $null = $dataSubnetIds.Add([string]$reference.SubnetId)
+            }
+            if ($index.PublicIpByIpConfigurationId.ContainsKey([string]$reference.ReferenceId)) {
+                $publicIpId = ConvertTo-ResourceId (Get-ObjectValue $index.PublicIpByIpConfigurationId[[string]$reference.ReferenceId] 'id')
+                if ($isManagement) {
+                    $null = $managementPublicIpIds.Add($publicIpId)
+                } else {
+                    $null = $dataPublicIpIds.Add($publicIpId)
+                }
+            }
+        }
+        $relation = [pscustomobject]@{
+            Rows=$baseRelation.Rows
+            SubnetIds=@($dataSubnetIds | Sort-Object)
+            PublicIpIds=@($dataPublicIpIds | Sort-Object)
+            PrivateIpAddresses=$baseRelation.PrivateIpAddresses
+            ManagementSubnetIds=@($managementSubnetIds | Sort-Object)
+            ManagementPublicIpIds=@($managementPublicIpIds | Sort-Object)
+            ManagementPrivateIpAddresses=$baseRelation.ManagementPrivateIpAddresses
+            ManagementIpConfigurationIds=@($managementConfigurationIds | Sort-Object)
+        }
+        $index.FirewallRelationById[$firewallId] = $relation
+        foreach ($subnetId in @($relation.SubnetIds) + @($relation.ManagementSubnetIds)) {
+            Add-IndexValue $index.FirewallIdsBySubnetId $subnetId $firewallId
+        }
+        # A secured virtual hub firewall has no subnet and is reached through its hub.
+        Add-IndexValue $index.FirewallIdsByHubId (ConvertTo-ResourceId (Get-ObjectValue $group.Group[0] 'virtualHubId' '')) $firewallId
+        Add-IndexValue $index.FirewallIdsByPolicyId (ConvertTo-ResourceId (Get-ObjectValue $group.Group[0] 'firewallPolicyId' '')) $firewallId
+    }
+    foreach ($policyId in @($index.FirewallPolicyById.Keys | Sort-Object)) {
+        $basePolicyId = ConvertTo-ResourceId (Get-ObjectValue $index.FirewallPolicyById[$policyId] 'basePolicyId' '')
+        Add-IndexValue $index.ChildPolicyIdsByBasePolicyId $basePolicyId $policyId
+    }
+    foreach ($definition in @(
+        @{Data='virtualNetworkGateways';Relations=$index.GatewayRelationById;BySubnet=$index.GatewayIdsBySubnetId},
+        @{Data='bastionHosts';Relations=$index.BastionRelationById;BySubnet=$index.BastionIdsBySubnetId}
+    )) {
+        foreach ($group in @(Get-DataRows $Data $definition.Data | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
+            $id = [string]$group.Name
+            $relation = Get-ExpandedServiceRelation @($group.Group)
+            $definition.Relations[$id] = $relation
+            foreach ($subnetId in $relation.SubnetIds) { Add-IndexValue $definition.BySubnet $subnetId $id }
+        }
     }
     foreach ($connection in Get-DataRows $Data 'hubVirtualNetworkConnections') {
         Add-IndexValue $index.HubConnectionsByVnetId (ConvertTo-ResourceId (Get-ObjectValue $connection 'remoteVnetId')) $connection
@@ -1326,10 +1672,11 @@ function Get-AzureIconPath {
         ExpressRouteGateway='networking/ExpressRoute_Circuits.svg'; ExpressRouteCircuit='networking/ExpressRoute_Circuits.svg'
         Bastion='networking/Bastions.svg'; LocalNetworkGateway='networking/Local_Network_Gateways.svg'
         VPNConnection='networking/Connections.svg'; HubConnection='networking/Connections.svg'; RemoteGateway='networking/Virtual_Network_Gateways.svg'
-        RemoteVNet='networking/Virtual_Networks.svg'; SubnetOccupant='general/Resource.svg'
+        FirewallPolicy='networking/Azure_Firewall_Policy.svg'; FirewallManagementInterface='networking/Firewalls.svg'
+        RemoteVNet='networking/Virtual_Networks.svg'; SubnetOccupant='general/All_Resources.svg'
     }
     if ($icons.ContainsKey($Kind)) { return "img/lib/azure2/$($icons[$Kind])" }
-    return 'img/lib/azure2/general/Resource.svg'
+    return 'img/lib/azure2/general/All_Resources.svg'
 }
 
 function Get-AzureNodeStyle {
@@ -1354,7 +1701,7 @@ function Get-FriendlyResourceType {
         Gateway='Virtual network gateway';RemoteGateway='Remote virtual network gateway'
         ExpressRouteGateway='ExpressRoute gateway';ExpressRouteCircuit='ExpressRoute circuit'
         Bastion='Azure Bastion';LocalNetworkGateway='Local network gateway';VPNConnection='Gateway connection'
-        HubConnection='Virtual Hub connection'
+        HubConnection='Virtual Hub connection';FirewallPolicy='Firewall policy';FirewallManagementInterface='Firewall management interface'
         RemoteVNet='Remote virtual network';GenericExternal='External endpoint'
     }
     if($Kind -eq 'PrivateLinkTarget'){
@@ -1549,7 +1896,19 @@ function Get-PageConnectorStyle {
     if ($targetLane -eq 'External') {
         return $base + 'exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;'
     }
+    if ($sourceLane -eq 'Internal' -and $targetIsSubnet) {
+        # Subnets are stacked vertically, so a contained resource reaches another
+        # subnet through the border facing it instead of wrapping around its side.
+        $targetIsAbove = [array]::IndexOf($SubnetIds, [string]$Edge.Target) -lt [array]::IndexOf($SubnetIds, [string]$sourceNode.SubnetId)
+        $entryY = if ($targetIsAbove) { 1 } else { 0 }
+        return $base + "exitX=1;exitY=0.5;exitPerimeter=1;entryX=0.5;entryY=$entryY;entryPerimeter=1;"
+    }
     if ($sourceLane -eq 'Internal' -and $targetLane -eq 'Internal') {
+        # Between resources in two stacked subnets, leave and enter on the right so
+        # the line runs beside the subnet headers instead of across them.
+        if ($sourceNode.SubnetId -and $targetNode.SubnetId -and $sourceNode.SubnetId -ne $targetNode.SubnetId) {
+            return $base + 'exitX=1;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;'
+        }
         if ($sourceNode.Kind -eq 'VM' -and $targetNode.Kind -eq 'NIC') {
             return $base + 'exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;'
         }
@@ -1603,6 +1962,77 @@ function Add-ReferencedPublicIpPrefix {
     $detail = @($address, (($sku, $version | Where-Object { $_ }) -join ' / ')) | Where-Object { $_ }
     Add-GraphNode -Nodes $Nodes -UsedResourceIds $UsedResourceIds -Id $id -Name $name -Kind 'PublicIPPrefix' `
         -ResourceType 'Microsoft.Network/publicIPPrefixes' -Label "<b>$name</b><br>$($detail -join '<br>')" -Lane Connectivity
+}
+
+function Get-FirewallLabelDetail {
+    param([object]$Item,[object]$Relation)
+
+    # Returns the label lines shown below the firewall name. Related values
+    # share a line so the label still fits the fixed node height.
+    # The management IP is shown on the management interface shape instead.
+    $addresses = @(@($Relation.PrivateIpAddresses) + @([string](Get-ObjectValue $Item 'hubPrivateIpAddress' '')) | Where-Object { $_ })
+    $addressLine = @($addresses -join ', ') | Where-Object { $_ }
+
+    # A policy-managed firewall takes its threat intelligence mode from the
+    # policy, so the firewall's own value is only meaningful without one.
+    $policyId = [string](Get-ObjectValue $Item 'firewallPolicyId' '')
+    $threatIntelMode = [string](Get-ObjectValue $Item 'threatIntelMode' '')
+    $policyLine = ''
+    if ($policyId) {
+        $policyLine = "Policy: $(Get-ResourceNameFromId $policyId)"
+    } elseif ($threatIntelMode) {
+        $policyLine = "Threat intel: $threatIntelMode"
+    }
+
+    $zones = ConvertTo-DisplayList (Get-ObjectValue $Item 'zones' '')
+    $stateLine = @(
+        $(if ($zones) { "Zones: $zones" }),
+        [string](Get-ObjectValue $Item 'provisioningState' '')
+    ) | Where-Object { $_ }
+    $hubPublicIps = Get-JsonPropertyList (Get-ObjectValue $Item 'hubPublicIpAddresses' '') 'address'
+
+    return @(
+        ("$(Get-ObjectValue $Item 'sku' '') $(Get-ObjectValue $Item 'tier' '')").Trim(),
+        ($addressLine -join ' | '),
+        $policyLine,
+        ($stateLine -join ' | '),
+        $(if ($hubPublicIps) { "Public: $hubPublicIps" })
+    ) | Where-Object { $_ }
+}
+
+function Get-FirewallPolicyLinkAttribute {
+    param([object]$Item,[hashtable]$DetailPageIdByResourceId)
+
+    # Shape attributes that open the firewall's policy page, when one is built.
+    $attributes = @{}
+    $policyId = ConvertTo-ResourceId (Get-ObjectValue $Item 'firewallPolicyId' '')
+    if ($policyId -and $DetailPageIdByResourceId.ContainsKey($policyId)) {
+        $attributes.link = "data:page/id,$($DetailPageIdByResourceId[$policyId])"
+        $attributes.tooltip = 'Open firewall policy rules'
+    }
+    return $attributes
+}
+
+function Get-PrimaryLocalSubnetId {
+    param(
+        [string[]]$CandidateIds,
+        [System.Collections.Generic.HashSet[string]]$LocalSubnetIds,
+        [hashtable]$SubnetById,
+        [string]$PreferredName = ''
+    )
+
+    $localCandidates = @($CandidateIds | ForEach-Object { ConvertTo-ResourceId $_ } |
+        Where-Object { $_ -and $LocalSubnetIds.Contains($_) } | Sort-Object -Unique)
+    if ($PreferredName) {
+        foreach ($candidateId in $localCandidates) {
+            if ($SubnetById.ContainsKey($candidateId) -and
+                [string](Get-ObjectValue $SubnetById[$candidateId] 'name' '') -ieq $PreferredName) {
+                return $candidateId
+            }
+        }
+    }
+    if ($localCandidates.Count -gt 0) { return [string]$localCandidates[0] }
+    return ''
 }
 
 function Add-PageLegend {
@@ -1836,10 +2266,15 @@ function New-EnhancedDrawIoPage {
         $tier = [string](Get-ObjectValue $item 'tier' '')
         $privateIps = @($relation.PrivateIpAddresses)
         $details = @($sku,$tier,$(if ($privateIps.Count -gt 0) { "Private IPs: $($privateIps -join ', ')" })) | Where-Object { $_ }
+        $primarySubnetId = Get-PrimaryLocalSubnetId $relation.DeploymentSubnetIds $subnetIdSet $Index.SubnetById
+        $lane = if ($primarySubnetId) { 'Internal' } else { 'Connectivity' }
         Add-GraphNode $nodes $UsedResourceIds $id $name ApplicationGateway 'Microsoft.Network/applicationGateways' `
-            "<b>$name</b><br>$($details -join '<br>')" Connectivity
-        foreach ($sid in @($relation.SubnetIds | Where-Object { $subnetIdSet.Contains($_) })) {
-            Add-GraphEdge $edges $edgeKeys $id $sid 'gateway subnet' Attachment
+            "<b>$name</b><br>$($details -join '<br>')" $lane $primarySubnetId
+        foreach ($sid in @($relation.DeploymentSubnetIds | Where-Object { $subnetIdSet.Contains($_) -and $_ -ne $primarySubnetId })) {
+            Add-GraphEdge $edges $edgeKeys $id $sid 'additional gateway subnet' Attachment
+        }
+        foreach ($sid in @($relation.FrontendSubnetIds | Where-Object { $subnetIdSet.Contains($_) -and $_ -ne $primarySubnetId })) {
+            Add-GraphEdge $edges $edgeKeys $id $sid 'frontend subnet' Attachment
         }
         foreach ($pipId in $relation.PublicIpIds) {
             Add-ReferencedPublicIp $pipId $nodes $publicIpById $UsedResourceIds
@@ -1847,25 +2282,92 @@ function New-EnhancedDrawIoPage {
         }
     }
 
-    foreach ($definition in @(
-        @{Data='firewalls';Kind='Firewall';Type='Microsoft.Network/azureFirewalls';Relation='firewall subnet'},
-        @{Data='virtualNetworkGateways';Kind='Gateway';Type='Microsoft.Network/virtualNetworkGateways';Relation='gateway subnet'}
-    )) {
-        foreach($group in @(Get-DataRows $Data $definition.Data | Where-Object { $subnetIdSet.Contains((ConvertTo-ResourceId (Get-ObjectValue $_ 'subnetId'))) } | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
-            $item=$group.Group[0];$id=ConvertTo-ResourceId (Get-ObjectValue $item 'id');$name=[string](Get-ObjectValue $item 'name' (Get-ResourceNameFromId $id));$sku=[string](Get-ObjectValue $item 'sku' '');$tier=[string](Get-ObjectValue $item 'tier' '');$gatewayType=[string](Get-ObjectValue $item 'gatewayType' '')
-            $details=@($sku,$tier,$gatewayType,(Get-ObjectValue $item 'privateIpAddress' ''))|Where-Object{$_}
-            Add-GraphNode $nodes $UsedResourceIds $id $name $definition.Kind $definition.Type "<b>$name</b><br>$($details -join '<br>')" Connectivity
-            foreach($row in $group.Group){$sid=ConvertTo-ResourceId (Get-ObjectValue $row 'subnetId');Add-GraphEdge $edges $edgeKeys $id $sid $definition.Relation Attachment;$pip=ConvertTo-ResourceId (Get-ObjectValue $row 'publicIpId');if($pip){Add-ReferencedPublicIp $pip $nodes $publicIpById $UsedResourceIds;Add-GraphEdge $edges $edgeKeys $pip $id 'public IP' Attachment}}
+    $localFirewallIds = @(@(foreach ($subnetId in $subnetIds) {
+        $Index.FirewallIdsBySubnetId[$subnetId] | ForEach-Object { $_ }
+    }) | Sort-Object -Unique)
+    foreach ($id in $localFirewallIds) {
+        $relation = $Index.FirewallRelationById[$id]
+        $item = $relation.Rows[0]
+        $name = [string](Get-ObjectValue $item 'name' (Get-ResourceNameFromId $id))
+        $details = @(Get-FirewallLabelDetail $item $relation)
+        $primarySubnetId = Get-PrimaryLocalSubnetId $relation.SubnetIds $subnetIdSet $Index.SubnetById 'AzureFirewallSubnet'
+        $lane = if ($primarySubnetId) { 'Internal' } else { 'Connectivity' }
+        Add-GraphNode $nodes $UsedResourceIds $id $name Firewall 'Microsoft.Network/azureFirewalls' `
+            "<b>$name</b><br>$($details -join '<br>')" $lane $primarySubnetId `
+            (Get-FirewallPolicyLinkAttribute $item $DetailPageIdByResourceId)
+        foreach ($sid in @($relation.SubnetIds | Where-Object { $subnetIdSet.Contains($_) -and $_ -ne $primarySubnetId })) {
+            Add-GraphEdge $edges $edgeKeys $id $sid 'additional firewall subnet' Attachment
+        }
+        foreach ($pipId in $relation.PublicIpIds) {
+            Add-ReferencedPublicIp $pipId $nodes $publicIpById $UsedResourceIds
+            Add-GraphEdge $edges $edgeKeys $pipId $id 'public IP' Attachment
+        }
+        # The firewall's second interface sits in the management subnet. Drawing it
+        # there shows that placement directly, and the management public IP
+        # belongs to that interface rather than to the data-plane firewall shape.
+        $managementSubnetId = @($relation.ManagementSubnetIds | Where-Object { $subnetIdSet.Contains($_) } | Select-Object -First 1)
+        $managementTargetId = $id
+        if ($managementSubnetId.Count -gt 0) {
+            $managementTargetId = "$id/managementipconfiguration"
+            if (@($relation.ManagementIpConfigurationIds).Count -gt 0) { $managementTargetId = [string]@($relation.ManagementIpConfigurationIds)[0] }
+            $managementAddresses = @($relation.ManagementPrivateIpAddresses | Where-Object { $_ })
+            $managementAddressText = if ($managementAddresses.Count -gt 0) { $managementAddresses -join ', ' } else { "<font color='#666666'>Private IP not reported</font>" }
+            Add-GraphNode $nodes $UsedResourceIds $managementTargetId $name FirewallManagementInterface `
+                'Microsoft.Network/azureFirewalls/azureFirewallIpConfigurations' "<b>$name</b><br>$managementAddressText" `
+                Internal ([string]$managementSubnetId[0]) @{ tooltip = "Management interface of Azure Firewall $name" }
+            Add-GraphEdge $edges $edgeKeys $id $managementTargetId 'management interface' Attachment
+        }
+        foreach ($pipId in $relation.ManagementPublicIpIds) {
+            Add-ReferencedPublicIp $pipId $nodes $publicIpById $UsedResourceIds
+            Add-GraphEdge $edges $edgeKeys $pipId $managementTargetId 'management public IP' Attachment
         }
     }
 
-    foreach($group in @(Get-DataRows $Data 'bastionHosts' | Where-Object { $subnetIdSet.Contains((ConvertTo-ResourceId (Get-ObjectValue $_ 'subnetId'))) } | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
-        $item=$group.Group[0];$id=ConvertTo-ResourceId (Get-ObjectValue $item 'id');$name=[string](Get-ObjectValue $item 'name' (Get-ResourceNameFromId $id))
-        $sku=[string](Get-ObjectValue $item 'sku' '');$scale=[string](Get-ObjectValue $item 'scaleUnits' '');$state=[string](Get-ObjectValue $item 'provisioningState' '')
+    $localGatewayIds = @(@(foreach ($subnetId in $subnetIds) {
+        $Index.GatewayIdsBySubnetId[$subnetId] | ForEach-Object { $_ }
+    }) | Sort-Object -Unique)
+    foreach ($id in $localGatewayIds) {
+        $relation = $Index.GatewayRelationById[$id]
+        $item = $relation.Rows[0]
+        $name = [string](Get-ObjectValue $item 'name' (Get-ResourceNameFromId $id))
+        $details = @(
+            (Get-ObjectValue $item 'sku' ''),
+            (Get-ObjectValue $item 'gatewayType' ''),
+            $(if ($relation.PrivateIpAddresses.Count -gt 0) { $relation.PrivateIpAddresses -join ', ' })
+        ) | Where-Object { $_ }
+        $primarySubnetId = Get-PrimaryLocalSubnetId $relation.SubnetIds $subnetIdSet $Index.SubnetById 'GatewaySubnet'
+        $lane = if ($primarySubnetId) { 'Internal' } else { 'Connectivity' }
+        Add-GraphNode $nodes $UsedResourceIds $id $name Gateway 'Microsoft.Network/virtualNetworkGateways' `
+            "<b>$name</b><br>$($details -join '<br>')" $lane $primarySubnetId
+        foreach ($sid in @($relation.SubnetIds | Where-Object { $subnetIdSet.Contains($_) -and $_ -ne $primarySubnetId })) {
+            Add-GraphEdge $edges $edgeKeys $id $sid 'additional gateway subnet' Attachment
+        }
+        foreach ($pipId in $relation.PublicIpIds) {
+            Add-ReferencedPublicIp $pipId $nodes $publicIpById $UsedResourceIds
+            Add-GraphEdge $edges $edgeKeys $pipId $id 'public IP' Attachment
+        }
+    }
+
+    $localBastionIds = @(@(foreach ($subnetId in $subnetIds) {
+        $Index.BastionIdsBySubnetId[$subnetId] | ForEach-Object { $_ }
+    }) | Sort-Object -Unique)
+    foreach ($id in $localBastionIds) {
+        $relation = $Index.BastionRelationById[$id]
+        $item = $relation.Rows[0]
+        $name = [string](Get-ObjectValue $item 'name' (Get-ResourceNameFromId $id))
+        $sku = [string](Get-ObjectValue $item 'sku' ''); $scale = [string](Get-ObjectValue $item 'scaleUnits' ''); $state = [string](Get-ObjectValue $item 'provisioningState' '')
         $features=@();if((Get-ObjectValue $item 'enableTunneling' $false)){$features+='Tunneling'};if((Get-ObjectValue $item 'enableIpConnect' $false)){$features+='IP Connect'};if((Get-ObjectValue $item 'enableShareableLink' $false)){$features+='Shareable Link'};if((Get-ObjectValue $item 'enableKerberos' $false)){$features+='Kerberos'}
-        $details=@($sku,$(if($scale){"Scale units: $scale"}),$state,$(if($features.Count -gt 0){$features -join ', '}))|Where-Object{$_}
-        Add-GraphNode $nodes $UsedResourceIds $id $name Bastion 'Microsoft.Network/bastionHosts' "<b>$name</b><br>$($details -join '<br>')" Connectivity
-        foreach($row in $group.Group){$sid=ConvertTo-ResourceId (Get-ObjectValue $row 'subnetId');Add-GraphEdge $edges $edgeKeys $id $sid 'Bastion subnet' Attachment;$pip=ConvertTo-ResourceId (Get-ObjectValue $row 'publicIpId');if($pip){Add-ReferencedPublicIp $pip $nodes $publicIpById $UsedResourceIds;Add-GraphEdge $edges $edgeKeys $pip $id 'Bastion public IP' Attachment}}
+        $details=@($sku,$(if($scale){"Scale units: $scale"}),$state,$(if($features.Count -gt 0){$features -join ', '}),$(if($relation.PrivateIpAddresses.Count -gt 0){$relation.PrivateIpAddresses -join ', '}))|Where-Object{$_}
+        $primarySubnetId = Get-PrimaryLocalSubnetId $relation.SubnetIds $subnetIdSet $Index.SubnetById 'AzureBastionSubnet'
+        $lane = if ($primarySubnetId) { 'Internal' } else { 'Connectivity' }
+        Add-GraphNode $nodes $UsedResourceIds $id $name Bastion 'Microsoft.Network/bastionHosts' "<b>$name</b><br>$($details -join '<br>')" $lane $primarySubnetId
+        foreach ($sid in @($relation.SubnetIds | Where-Object { $subnetIdSet.Contains($_) -and $_ -ne $primarySubnetId })) {
+            Add-GraphEdge $edges $edgeKeys $id $sid 'additional Bastion subnet' Attachment
+        }
+        foreach ($pipId in $relation.PublicIpIds) {
+            Add-ReferencedPublicIp $pipId $nodes $publicIpById $UsedResourceIds
+            Add-GraphEdge $edges $edgeKeys $pipId $id 'Bastion public IP' Attachment
+        }
     }
 
     $localGatewayIds=@($nodes.Values|Where-Object Kind -eq 'Gateway'|ForEach-Object{$_.Id})
@@ -1967,6 +2469,17 @@ function New-EnhancedDrawIoPage {
                 'Microsoft.Network/expressRouteGateways' "<b>$gatewayName</b><br>$gatewayDetails" External
             Add-GraphEdge $edges $edgeKeys $hubId $gatewayId 'ExpressRoute gateway' Hybrid
         }
+        foreach ($firewallId in @($Index.FirewallIdsByHubId[$hubId] | ForEach-Object { $_ })) {
+            if (-not $firewallId) { continue }
+            $firewallRelation = $Index.FirewallRelationById[$firewallId]
+            $firewallItem = $firewallRelation.Rows[0]
+            $firewallName = [string](Get-ObjectValue $firewallItem 'name' (Get-ResourceNameFromId $firewallId))
+            $firewallDetails = @(Get-FirewallLabelDetail $firewallItem $firewallRelation)
+            Add-GraphNode $nodes $UsedResourceIds $firewallId $firewallName Firewall 'Microsoft.Network/azureFirewalls' `
+                "<b>$firewallName</b><br>$($firewallDetails -join '<br>')" External '' `
+                (Get-FirewallPolicyLinkAttribute $firewallItem $DetailPageIdByResourceId)
+            Add-GraphEdge $edges $edgeKeys $hubId $firewallId 'hub firewall' Hybrid
+        }
     }
 
     foreach($peering in @($Index.PeeringsByVnetId[$vnetId] | ForEach-Object { $_ })){
@@ -1995,23 +2508,28 @@ function New-EnhancedDrawIoPage {
     }
 
     # Propagate subnet anchors across relationships. This aligns security and
-    # connectivity resources with the subnet row they are closest to.
+    # connectivity resources with the subnet row they are closest to. A subnet
+    # and the resources it contains keep their own anchor, so an edge to a
+    # second subnet cannot pull their attachments into that subnet's row.
     $anchorCandidates = @{}
+    $fixedAnchorIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($sid in $subnetIds) {
         $anchorCandidates[$sid] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $null = $anchorCandidates[$sid].Add($sid)
+        $null = $fixedAnchorIds.Add($sid)
     }
     foreach ($node in $nodes.Values) {
         if ($node.SubnetId) {
             $anchorCandidates[$node.Id] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
             $null = $anchorCandidates[$node.Id].Add($node.SubnetId)
+            $null = $fixedAnchorIds.Add($node.Id)
         }
     }
     for ($pass = 0; $pass -lt 4; $pass++) {
         foreach ($edge in $edges) {
             foreach ($direction in @(@($edge.Source, $edge.Target), @($edge.Target, $edge.Source))) {
                 $from = $direction[0]; $to = $direction[1]
-                if (-not $anchorCandidates.ContainsKey($from)) { continue }
+                if (-not $anchorCandidates.ContainsKey($from) -or $fixedAnchorIds.Contains($to)) { continue }
                 if (-not $anchorCandidates.ContainsKey($to)) {
                     $anchorCandidates[$to] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 }
@@ -2053,6 +2571,11 @@ function New-EnhancedDrawIoPage {
                 if ($usedInternalIds.Add($vm.Id)) { $items.Add($vm) }
             }
             $units.Add([pscustomobject]@{Items=@($items);OwnRow=$false})
+        }
+        foreach ($gateway in @($internal | Where-Object Kind -eq 'Gateway' | Sort-Object Name)) {
+            if ($usedInternalIds.Add($gateway.Id)) {
+                $units.Add([pscustomobject]@{Items=@($gateway);OwnRow=$true})
+            }
         }
         foreach ($endpoint in @($internal | Where-Object Kind -eq 'PrivateEndpoint' | Sort-Object Name)) {
             if ($usedInternalIds.Add($endpoint.Id)) {
@@ -2130,14 +2653,58 @@ function New-EnhancedDrawIoPage {
         $preferredRowByNodeId[$sideNode.Id] = if ($matchedRows.Count -gt 0) { ($matchedRows | Measure-Object -Minimum).Minimum } else { 0 }
     }
 
+    # Gateways connect from inside GatewaySubnet to nodes in the remote lane.
+    # Reserve every row their orthogonal connectors can cross before placing
+    # public IPs or other nodes in the intervening connectivity lane.
+    $gatewayTransitSlotsBySubnetId = @{}
+    $preassignedExternalSlotByNodeId = @{}
+    $preassignedExternalSlotsBySubnetId = @{}
+    foreach ($sid in $subnetIds) {
+        $transitSlots = [System.Collections.Generic.HashSet[int]]::new()
+        $externalSlots = [System.Collections.Generic.HashSet[int]]::new()
+        $gateways = @($nodes.Values | Where-Object {
+            $_.Kind -eq 'Gateway' -and $_.Lane -eq 'Internal' -and $_.SubnetId -eq $sid
+        } | Sort-Object @{Expression={ [int]$internalRowIndexByNodeId[$_.Id] }}, Name, Id)
+        foreach ($gateway in $gateways) {
+            $gatewayRow = [int]$internalRowIndexByNodeId[$gateway.Id]
+            $null = $transitSlots.Add($gatewayRow)
+            $endpointIds = @($edges | Where-Object {
+                $_.Kind -eq 'Hybrid' -and ($_.Source -eq $gateway.Id -or $_.Target -eq $gateway.Id)
+            } | ForEach-Object {
+                if ($_.Source -eq $gateway.Id) { $_.Target } else { $_.Source }
+            } | Where-Object {
+                $nodes.ContainsKey($_) -and $nodes[$_].Lane -eq 'External' -and $anchorByNodeId[$_] -eq $sid
+            } | Sort-Object -Unique)
+            $endpoints = @($endpointIds | ForEach-Object { $nodes[$_] } | Sort-Object Kind, Name, Id)
+            foreach ($endpoint in $endpoints) {
+                if ($preassignedExternalSlotByNodeId.ContainsKey($endpoint.Id)) {
+                    $endpointSlot = [int]$preassignedExternalSlotByNodeId[$endpoint.Id]
+                } else {
+                    $endpointSlot = $gatewayRow
+                    while ($externalSlots.Contains($endpointSlot)) { $endpointSlot++ }
+                    $preassignedExternalSlotByNodeId[$endpoint.Id] = $endpointSlot
+                    $null = $externalSlots.Add($endpointSlot)
+                }
+                $firstTransitSlot = [math]::Min($gatewayRow, $endpointSlot)
+                $lastTransitSlot = [math]::Max($gatewayRow, $endpointSlot)
+                for ($slot = $firstTransitSlot; $slot -le $lastTransitSlot; $slot++) {
+                    $null = $transitSlots.Add($slot)
+                }
+            }
+        }
+        $gatewayTransitSlotsBySubnetId[$sid] = $transitSlots
+        $preassignedExternalSlotsBySubnetId[$sid] = $externalSlots
+    }
+
     $securityPlacementsBySubnetId = @{}; $connectivityPlacementsBySubnetId = @{}; $externalPlacementsBySubnetId = @{}
     foreach ($sid in $subnetIds) {
         foreach ($placementDefinition in @(
-            @{Nodes=$securityNodes;Target=$securityPlacementsBySubnetId},
-            @{Nodes=$connectivityNodes;Target=$connectivityPlacementsBySubnetId}
+            @{Nodes=$securityNodes;Target=$securityPlacementsBySubnetId;Reserved=@()},
+            @{Nodes=$connectivityNodes;Target=$connectivityPlacementsBySubnetId;Reserved=@($gatewayTransitSlotsBySubnetId[$sid])}
         )) {
             $placements = [System.Collections.Generic.List[object]]::new()
             $occupiedSlots = [System.Collections.Generic.HashSet[int]]::new()
+            foreach ($reservedSlot in $placementDefinition.Reserved) { $null = $occupiedSlots.Add([int]$reservedSlot) }
             $anchoredNodes = @($placementDefinition.Nodes | Where-Object { $anchorByNodeId[$_.Id] -eq $sid } | Sort-Object @{Expression={ if ($preferredRowByNodeId.ContainsKey($_.Id)) { $preferredRowByNodeId[$_.Id] } else { 0 } }}, Kind, Name)
             foreach ($node in $anchoredNodes) {
                 $slot = if ($preferredRowByNodeId.ContainsKey($node.Id)) { [int]$preferredRowByNodeId[$node.Id] } else { 0 }
@@ -2153,8 +2720,12 @@ function New-EnhancedDrawIoPage {
     foreach($sid in $subnetIds){
         $placements=[System.Collections.Generic.List[object]]::new()
         $occupiedSlots=[System.Collections.Generic.HashSet[int]]::new()
+        foreach($reservedSlot in @($preassignedExternalSlotsBySubnetId[$sid])){$null=$occupiedSlots.Add([int]$reservedSlot)}
         $anchoredNodes=@($externalNodes|Where-Object{$anchorByNodeId[$_.Id] -eq $sid}|Sort-Object Kind,Name)
-        foreach($node in $anchoredNodes){
+        foreach($node in @($anchoredNodes|Where-Object{$preassignedExternalSlotByNodeId.ContainsKey($_.Id)}|Sort-Object @{Expression={$preassignedExternalSlotByNodeId[$_.Id]}},Kind,Name)){
+            $placements.Add([pscustomobject]@{Node=$node;Slot=[int]$preassignedExternalSlotByNodeId[$node.Id]})
+        }
+        foreach($node in @($anchoredNodes|Where-Object{-not $preassignedExternalSlotByNodeId.ContainsKey($_.Id)})){
             $connectedSlots=@()
             if($adjacentNodeIds.ContainsKey($node.Id)){$connectedSlots=@($adjacentNodeIds[$node.Id]|Where-Object{$connectivitySlotByNodeId.ContainsKey($_)}|ForEach-Object{$connectivitySlotByNodeId[$_]})}
             $slot=if($connectedSlots.Count -gt 0){[int](($connectedSlots|Measure-Object -Minimum).Minimum)}elseif($preferredRowByNodeId.ContainsKey($node.Id)){[int]$preferredRowByNodeId[$node.Id]}else{0}
@@ -2631,6 +3202,367 @@ function New-RouteTableDetailPage {
     Set-MxPageSize $page.Model 1220 ($tableY+34+($row*48))
 }
 
+function Get-ReachableFirewallPolicy {
+    param([object]$Index,[string[]]$FirewallIds)
+
+    # Returns the policies attached to the given firewalls plus every parent
+    # policy they inherit from. Policy rows nothing refers to are ignored.
+    $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $pending = [System.Collections.Generic.Queue[string]]::new()
+    foreach ($firewallId in @($FirewallIds | Where-Object { $_ } | Sort-Object)) {
+        if (-not $Index.FirewallRelationById.ContainsKey($firewallId)) { continue }
+        $policyId = ConvertTo-ResourceId (Get-ObjectValue $Index.FirewallRelationById[$firewallId].Rows[0] 'firewallPolicyId' '')
+        if ($policyId -and $visited.Add($policyId)) { $pending.Enqueue($policyId) }
+    }
+    $policies = [System.Collections.Generic.List[object]]::new()
+    while ($pending.Count -gt 0) {
+        $policyId = $pending.Dequeue()
+        if (-not $Index.FirewallPolicyById.ContainsKey($policyId)) { continue }
+        $policy = $Index.FirewallPolicyById[$policyId]
+        $policies.Add($policy)
+        $basePolicyId = ConvertTo-ResourceId (Get-ObjectValue $policy 'basePolicyId' '')
+        if ($basePolicyId -and $visited.Add($basePolicyId)) { $pending.Enqueue($basePolicyId) }
+    }
+    return @($policies | Sort-Object `
+        @{Expression={ [string](Get-ObjectValue $_ 'name' '') }},
+        @{Expression={ ConvertTo-ResourceId (Get-ObjectValue $_ 'id' '') }})
+}
+
+function Get-FirewallRuleEndpointItem {
+    param([object]$Rule,[string[]]$ValueNames,[string]$IpGroupName)
+
+    # Returns the individual endpoint values of a rule, IP groups by name.
+    $values = [System.Collections.Generic.List[string]]::new()
+    foreach ($valueName in $ValueNames) {
+        foreach ($entry in @(Get-ObjectValue $Rule $valueName @())) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$entry)) { $values.Add([string]$entry) }
+        }
+    }
+    foreach ($groupId in @(Get-ObjectValue $Rule $IpGroupName @())) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$groupId)) { $values.Add("IP group: $(Get-ResourceNameFromId ([string]$groupId))") }
+    }
+    return $values.ToArray()
+}
+
+function Format-DetailCellList {
+    param([string[]]$Items,[double]$Width,[int]$ReservedLines = 0)
+
+    # A detail cell has a fixed height and hides overflow. A list that would not
+    # fit is cut after the last whole item that does, with the number left out
+    # stated in the cell and the complete list returned for the tooltip.
+    $entries = @($Items | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $fullText = $entries -join ', '
+    if ($entries.Count -eq 0) {
+        return [pscustomobject]@{ Text = 'Not specified'; FullText = ''; Truncated = $false }
+    }
+    if ($entries.Count -eq 1 -and $entries[0] -eq '*') {
+        return [pscustomobject]@{ Text = 'Any'; FullText = ''; Truncated = $false }
+    }
+    $charactersPerLine = [math]::Max(8, [math]::Floor(($Width - 12) / 5.4))
+    $capacity = [int]($charactersPerLine * [math]::Max(1, 4 - $ReservedLines) * 0.8)
+    if ($fullText.Length -le $capacity) {
+        return [pscustomobject]@{ Text = $fullText; FullText = $fullText; Truncated = $false }
+    }
+    # Room is kept for the "(+N more)" hint. The first item is always shown.
+    $budget = $capacity - 12
+    $shown = [System.Collections.Generic.List[string]]::new()
+    $length = 0
+    foreach ($entry in $entries) {
+        $added = $entry.Length
+        if ($shown.Count -gt 0) { $added += 2 }
+        if ($shown.Count -gt 0 -and ($length + $added) -gt $budget) { break }
+        $shown.Add($entry)
+        $length += $added
+    }
+    $text = $shown -join ', '
+    $hidden = $entries.Count - $shown.Count
+    if ($hidden -gt 0) { $text += " (+$hidden more)" }
+    return [pscustomobject]@{ Text = $text; FullText = $fullText; Truncated = $true }
+}
+
+function Add-FirewallRuleSection {
+    param(
+        [System.Xml.XmlDocument]$Document,
+        [System.Xml.XmlElement]$Root,
+        [string]$Title,
+        [object[]]$Entries,
+        [string]$IdPrefix,
+        [double]$StartY
+    )
+    # Same column order as the NSG rule tables. Firewall rules have no source
+    # port, and the priority shown is the collection's, within its group.
+    $columns=@(
+        @{Name='Priority';Width=75},@{Name='Collection';Width=170},@{Name='Name';Width=210},
+        @{Name='Destination port';Width=125},@{Name='Protocol';Width=100},
+        @{Name='Source';Width=290},@{Name='Destination';Width=360},@{Name='Action';Width=110}
+    )
+    $tableWidth=0;foreach($column in $columns){$tableWidth+=$column.Width}
+    $ruleCount=@($Entries|Where-Object{$null-ne$_.Rule}).Count
+    $inheritedCount=@($Entries|Where-Object{$null-ne$_.Rule-and$_.InheritedFrom}).Count
+    $countText="$ruleCount";if($inheritedCount-gt0){$countText="$ruleCount, $inheritedCount inherited"}
+    $inheritedCellStyle='rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;'
+    Add-MxVertex $Document $Root "$IdPrefix-heading" '1' "<b>$Title</b> ($countText)"'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontSize=12;align=left;spacingLeft=8;' 20 $StartY $tableWidth 34
+    $headerY=$StartY+40;$x=20;$columnX=@()
+    for($i=0;$i-lt$columns.Count;$i++){$columnX+=$x;Add-DetailTableCell $Document $Root "$IdPrefix-header-$i" $columns[$i].Name $x $headerY $columns[$i].Width 34 -Header;$x+=$columns[$i].Width}
+    $y=$headerY+34
+    $row=0;$groupNumber=0;$currentGroupKey=$null
+    foreach($entry in $Entries){
+        # Rows arrive in evaluation order; a band marks each change of group.
+        if($entry.GroupKey-ne$currentGroupKey){
+            $currentGroupKey=$entry.GroupKey;$groupNumber++
+            $groupOrigin='';if($entry.InheritedFrom){$groupOrigin=" &nbsp; | &nbsp; <b>Inherited from $($entry.InheritedFrom)</b>, evaluated before this policy's own rules"}
+            Add-MxVertex $Document $Root "$IdPrefix-group-$groupNumber" '1' "<b>$($entry.GroupName)</b> &nbsp; <font color='#666666'>Rule collection group, priority $($entry.GroupPriority)$groupOrigin</font>"'rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;' 20 $y $tableWidth 26
+            $y+=26
+        }
+        $collection=$entry.Collection;$rule=$entry.Rule
+        $ruleType=[string](Get-ObjectValue $rule 'ruleType' '')
+        $action=[string](Get-ObjectValue (Get-ObjectValue $collection 'action' $null) 'type' '')
+        $collectionPriority=ConvertTo-SecurityRuleDisplayValue (Get-ObjectValue $collection 'priority' '')
+        $collectionName=[string](Get-ObjectValue $collection 'name' '(unnamed collection)')
+        $ruleName=[string](Get-ObjectValue $rule 'name' '')
+        if($null-eq$rule){$ruleName='(no rules)'}elseif([string]::IsNullOrWhiteSpace($ruleName)){$ruleName='(unnamed rule)'}
+        # TLS inspection is switched on per application rule, so it is stated per rule.
+        $terminateTls=Get-ObjectValue $rule 'terminateTLS' $null
+        if($ruleType-eq'ApplicationRule'-and$null-ne$terminateTls){
+            $ruleName+="<br><font color='#666666'>TLS inspection: $(if([bool]$terminateTls){'on'}else{'off'})</font>"
+        }
+        $source=Format-DetailCellList (Get-FirewallRuleEndpointItem $rule @('sourceAddresses') 'sourceIpGroups') $columns[5].Width
+        $isDnat=$ruleType-eq'NatRule'
+        $destinationReservedLines=0;if($isDnat){$destinationReservedLines=1}
+        if($ruleType-eq'ApplicationRule'){
+            $applicationProtocols=@(@(Get-ObjectValue $rule 'protocols' @())|Where-Object{$null-ne$_})
+            $protocol=Format-DetailCellList @($applicationProtocols|ForEach-Object{[string](Get-ObjectValue $_ 'protocolType' '')}) $columns[4].Width
+            $ports=Format-DetailCellList @($applicationProtocols|ForEach-Object{[string](Get-ObjectValue $_ 'port' '')}) $columns[3].Width
+            $destination=Format-DetailCellList (Get-FirewallRuleEndpointItem $rule @('targetFqdns','fqdnTags','webCategories','targetUrls','destinationAddresses') 'destinationIpGroups') $columns[6].Width
+        }else{
+            $protocol=Format-DetailCellList @(Get-ObjectValue $rule 'ipProtocols' @()|ForEach-Object{[string]$_}) $columns[4].Width
+            $ports=Format-DetailCellList @(Get-ObjectValue $rule 'destinationPorts' @()|ForEach-Object{[string]$_}) $columns[3].Width
+            $destination=Format-DetailCellList (Get-FirewallRuleEndpointItem $rule @('destinationAddresses','destinationFqdns') 'destinationIpGroups') $columns[6].Width $destinationReservedLines
+        }
+        $destinationText=$destination.Text
+        if($isDnat){
+            $translatedTarget=[string](Get-ObjectValue $rule 'translatedAddress' '')
+            if(-not$translatedTarget){$translatedTarget=[string](Get-ObjectValue $rule 'translatedFqdn' '')}
+            $destinationText+="<br>&#8594; $(ConvertTo-SecurityRuleDisplayValue $translatedTarget):$(ConvertTo-SecurityRuleDisplayValue (Get-ObjectValue $rule 'translatedPort' ''))"
+        }
+        $actionLabel=if($action-ieq'Allow'){"$([char]0x2713) ALLOW"}elseif($action-ieq'Deny'){"$([char]0x2715) DENY"}else{(ConvertTo-SecurityRuleDisplayValue $action).ToUpperInvariant()}
+        $actionStyle=if($action-ieq'Allow'){'rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;'}elseif($action-ieq'Deny'){'rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontColor=#b91c1c;fontStyle=1;fontSize=10;align=center;'}else{'rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=10;align=center;'}
+        $values=@($collectionPriority,$collectionName,$ruleName,$ports.Text,$protocol.Text,$source.Text,$destinationText,$actionLabel)
+        # A shortened cell carries its complete list on hover; other cells keep the rule description.
+        $fullTextByColumn=@{3=$ports;4=$protocol;5=$source;6=$destination}
+        $description=[string](Get-ObjectValue $rule 'description' '')
+        for($i=0;$i-lt$columns.Count;$i++){
+            $cellAttributes=@{}
+            if(-not[string]::IsNullOrWhiteSpace($description)){$cellAttributes.tooltip=$description}
+            if($fullTextByColumn.ContainsKey($i)-and$fullTextByColumn[$i].Truncated){$cellAttributes.tooltip=$fullTextByColumn[$i].FullText}
+            if($i-eq($columns.Count-1)){
+                Add-DetailTableCell $Document $Root "$IdPrefix-rule-$row-$i" $values[$i] $columnX[$i] $y $columns[$i].Width 54 -StyleOverride $actionStyle -Attributes $cellAttributes
+            }elseif($entry.InheritedFrom){
+                Add-DetailTableCell $Document $Root "$IdPrefix-rule-$row-$i" $values[$i] $columnX[$i] $y $columns[$i].Width 54 -StyleOverride $inheritedCellStyle -Attributes $cellAttributes
+            }else{
+                Add-DetailTableCell $Document $Root "$IdPrefix-rule-$row-$i" $values[$i] $columnX[$i] $y $columns[$i].Width 54 -Attributes $cellAttributes
+            }
+        }
+        $y+=54;$row++
+    }
+    return ($y+20)
+}
+
+function Get-FirewallPolicyRuleEntry {
+    param([object]$Policy,[string]$KeyPrefix,[string]$InheritedFrom)
+
+    # Returns one entry per rule of a policy, in group, collection, and rule
+    # order. InheritedFrom names the parent policy when the entries are listed
+    # on a child policy's page.
+    $entries=[System.Collections.Generic.List[object]]::new()
+    $groups=@(ConvertFrom-JsonCollection(Get-ObjectValue $Policy 'ruleCollectionGroups' '')|Sort-Object @{Expression={[int](Get-ObjectValue $_ 'priority' 0)}},@{Expression={[string](Get-ObjectValue $_ 'name' '')}})
+    for($groupIndex=0;$groupIndex-lt$groups.Count;$groupIndex++){
+        $group=$groups[$groupIndex]
+        $collections=@(@(Get-ObjectValue $group 'ruleCollections' @())|Where-Object{$null-ne$_}|Sort-Object @{Expression={[int](Get-ObjectValue $_ 'priority' 0)}},@{Expression={[string](Get-ObjectValue $_ 'name' '')}})
+        foreach($collection in $collections){
+            $rules=@(@(Get-ObjectValue $collection 'rules' @())|Where-Object{$null-ne$_})
+            # A collection without rules still gets an entry, so it is not silently absent.
+            if($rules.Count-eq0){$rules=@($null)}
+            foreach($rule in $rules){
+                $ruleType=[string](Get-ObjectValue $rule 'ruleType' '')
+                if(-not$ruleType-and[string](Get-ObjectValue $collection 'ruleCollectionType' '')-ieq'FirewallPolicyNatRuleCollection'){$ruleType='NatRule'}
+                $entries.Add([pscustomobject]@{
+                    Type=$ruleType;GroupKey="$KeyPrefix-group-$groupIndex"
+                    GroupName=[string](Get-ObjectValue $group 'name' '(unnamed group)')
+                    GroupPriority=[string](Get-ObjectValue $group 'priority' 'not set')
+                    Collection=$collection;Rule=$rule;InheritedFrom=$InheritedFrom
+                })
+            }
+        }
+    }
+    return $entries.ToArray()
+}
+
+function New-FirewallPolicyDetailPage {
+    param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object]$Index,[object]$Policy,[string]$PageId,[hashtable]$DetailPageIdByResourceId)
+    $id=ConvertTo-ResourceId(Get-ObjectValue $Policy 'id');$name=[string](Get-ObjectValue $Policy 'name' (Get-ResourceNameFromId $id))
+    $page=New-DrawIoPageRoot $Document $MxFile $PageId "Firewall policy - $name" 1800 1200;$root=$page.Root;Add-DetailNavigation $Document $root
+    $pageWidth=1440
+    $warningStyle='rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#7a4f01;fontSize=10;align=left;spacingLeft=8;'
+    $title="<b>$name</b><br><font color='#666666'>Firewall policy | $(Get-ObjectValue $Policy 'resourceGroup' '') | $(Get-ObjectValue $Policy 'location' '')</font>"
+    Add-MxVertex $Document $root 'detail-title' '1' $title (Get-AzureNodeStyle 'FirewallPolicy' '#fffaf0' '#d6b656') 270 15 720 62 $id 'Microsoft.Network/firewallPolicies' @{tooltip=$id;tags=(Join-ShapeTag @('firewallpolicy','detail',$name))}
+
+    # Settings that were not returned are stated as such, never shown as a default.
+    $notReported='Not reported'
+    $tier=[string](Get-ObjectValue $Policy 'tier' '');if(-not$tier){$tier=$notReported}
+    $threatIntelMode=[string](Get-ObjectValue $Policy 'threatIntelMode' '');if(-not$threatIntelMode){$threatIntelMode=$notReported}
+    $state=[string](Get-ObjectValue $Policy 'provisioningState' '');if(-not$state){$state=$notReported}
+    $dnsProxyValue=Get-ObjectValue $Policy 'dnsProxyEnabled' $null
+    $dnsProxy=$notReported
+    if($null-ne$dnsProxyValue){$dnsProxy=if([bool]$dnsProxyValue){'Enabled'}else{'Disabled'}}
+    $firewallNames=@($Index.FirewallIdsByPolicyId[$id]|Where-Object{$_}|ForEach-Object{
+        $firewallItem=$Index.FirewallRelationById[[string]$_].Rows[0]
+        [string](Get-ObjectValue $firewallItem 'name' (Get-ResourceNameFromId ([string]$_)))
+    }|Sort-Object -Unique)
+    $childPolicyIds=@($Index.ChildPolicyIdsByBasePolicyId[$id]|Where-Object{$_}|ForEach-Object{[string]$_}|Sort-Object -Unique)
+    $childNames=@($childPolicyIds|ForEach-Object{[string](Get-ObjectValue $Index.FirewallPolicyById[$_] 'name' (Get-ResourceNameFromId $_))})
+    $basePolicyId=ConvertTo-ResourceId(Get-ObjectValue $Policy 'basePolicyId' '')
+    $basePolicyName=''
+    if($basePolicyId){
+        $basePolicyName=Get-ResourceNameFromId $basePolicyId
+        if($Index.FirewallPolicyById.ContainsKey($basePolicyId)){$basePolicyName=[string](Get-ObjectValue $Index.FirewallPolicyById[$basePolicyId] 'name' $basePolicyName)}
+    }
+    $dnsServersValue=Get-ObjectValue $Policy 'dnsServers' $null
+    $dnsServers=$notReported
+    if($null-ne$dnsServersValue){$dnsServers=ConvertTo-DisplayList $dnsServersValue;if(-not$dnsServers){$dnsServers='Azure default'}}
+    $inspectionParts=@("DNS servers: $dnsServers")
+    # Intrusion detection and TLS inspection exist only on Premium policies. They are
+    # also listed when the tier itself is unknown, so a failed read stays visible.
+    if($tier-ieq'Premium'-or$tier-eq$notReported){
+        $intrusionMode=[string](Get-ObjectValue $Policy 'intrusionDetectionMode' '')
+        $intrusionDetection=$notReported
+        if($intrusionMode){
+            $intrusionDetection=if($intrusionMode-ieq'Deny'){'Alert and deny'}else{$intrusionMode}
+            $overrideCount=[int](Get-ObjectValue $Policy 'intrusionDetectionSignatureOverrides' 0)
+            $bypassCount=[int](Get-ObjectValue $Policy 'intrusionDetectionBypassRules' 0)
+            $intrusionExtras=@(
+                $(if($overrideCount-gt0){"$overrideCount signature override(s)"}),
+                $(if($bypassCount-gt0){"$bypassCount bypass rule(s)"})
+            )|Where-Object{$_}
+            if(@($intrusionExtras).Count-gt0){$intrusionDetection+=" ($(@($intrusionExtras)-join', '))"}
+        }
+        $tlsValue=Get-ObjectValue $Policy 'tlsInspectionEnabled' $null
+        $tlsInspection=$notReported
+        if($null-ne$tlsValue){
+            $tlsInspection='Disabled'
+            if([bool]$tlsValue){
+                $tlsInspection='Enabled'
+                $certificateName=[string](Get-ObjectValue $Policy 'tlsInspectionCertificateName' '')
+                if($certificateName){$tlsInspection="Enabled (CA: $certificateName)"}
+            }
+        }
+        $inspectionParts+="IDPS: $intrusionDetection"
+        $inspectionParts+="TLS inspection: $tlsInspection"
+    }else{
+        $inspectionParts+="IDPS and TLS inspection: not available on the $tier tier"
+    }
+    $infoLines=@(
+        "Tier: $tier &nbsp; | &nbsp; Threat intelligence: $threatIntelMode &nbsp; | &nbsp; DNS proxy: $dnsProxy &nbsp; | &nbsp; State: $state",
+        ($inspectionParts-join' &nbsp; | &nbsp; '),
+        "Directly used by firewalls: $(if($firewallNames.Count-gt0){$firewallNames-join', '}else{'none'})",
+        "Inherited by policies: $(if($childNames.Count-gt0){$childNames-join', '}else{'none'})",
+        "Parent policy: $(if($basePolicyName){$basePolicyName}else{'none'})"
+    )
+    $metadataError=[string](Get-ObjectValue $Policy 'metadataError' '')
+    if($metadataError){$infoLines+="<font color='#b91c1c'><b>Policy settings could not be read:</b> $([System.Net.WebUtility]::HtmlEncode($metadataError))</font>"}
+    $infoHeight=35+($infoLines.Count*18)
+    Add-MxVertex $Document $root 'policy-info' '1' "<b>Policy</b><br>$($infoLines-join'<br>')" 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;' 20 100 $pageWidth $infoHeight
+    $nextY=100+$infoHeight+12
+
+    # Related policies get their own link shapes, because a shape has one link.
+    $relatedPolicies=@()
+    if($basePolicyId-and$DetailPageIdByResourceId.ContainsKey($basePolicyId)){$relatedPolicies+=@{Label="Parent policy: $basePolicyName";Id=$basePolicyId}}
+    for($i=0;$i-lt$childPolicyIds.Count;$i++){
+        if($DetailPageIdByResourceId.ContainsKey($childPolicyIds[$i])){$relatedPolicies+=@{Label="Child policy: $($childNames[$i])";Id=$childPolicyIds[$i]}}
+    }
+    for($i=0;$i-lt$relatedPolicies.Count;$i++){
+        $linkX=20+(($i%4)*355);$linkY=$nextY+([math]::Floor($i/4)*38)
+        Add-MxVertex $Document $root "policy-link-$($i+1)" '1' $relatedPolicies[$i].Label 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;fontSize=10;' $linkX $linkY 340 30 '' '' @{link="data:page/id,$($DetailPageIdByResourceId[$relatedPolicies[$i].Id])";tooltip='Open firewall policy rules'}
+    }
+    if($relatedPolicies.Count-gt0){$nextY+=([math]::Ceiling($relatedPolicies.Count/4.0)*38)+6}
+
+    $evaluationNote='<b>Evaluation order</b>' +
+        '<br>Rules are listed as evaluated: DNAT, then network, then application, each by group and collection priority.'
+    # The inheritance line only applies to a policy that has a parent.
+    if($basePolicyId){$evaluationNote+='<br>Rules inherited from a parent policy come first. DNAT rules are not inherited.'}
+    $evaluationNote+='<br>Traffic matching no rule is denied, except to the platform FQDNs in Azure''s built-in infrastructure rule collection. Neither is a rule in the policy.'
+    Add-MxVertex $Document $root 'evaluation-note' '1' $evaluationNote 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;' 20 $nextY $pageWidth 72
+    $nextY+=84
+
+    # Parent policies, topmost first, which is the order their rules are evaluated in.
+    $ancestors=[System.Collections.Generic.List[object]]::new()
+    $inheritanceWarnings=[System.Collections.Generic.List[string]]::new()
+    $visitedPolicyIds=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $null=$visitedPolicyIds.Add($id)
+    $ancestorId=$basePolicyId
+    while($ancestorId-and$visitedPolicyIds.Add($ancestorId)){
+        if(-not$Index.FirewallPolicyById.ContainsKey($ancestorId)){
+            $inheritanceWarnings.Add("parent policy $(Get-ResourceNameFromId $ancestorId) is not in the collected data")
+            break
+        }
+        $ancestor=$Index.FirewallPolicyById[$ancestorId]
+        $ancestors.Insert(0,$ancestor)
+        $ancestorId=ConvertTo-ResourceId(Get-ObjectValue $ancestor 'basePolicyId' '')
+    }
+
+    # One entry per rule. Inherited network and application rules come first;
+    # DNAT collections are not inherited. Splitting the entries by rule type
+    # afterwards keeps this order inside each section.
+    $entries=[System.Collections.Generic.List[object]]::new()
+    for($ancestorIndex=0;$ancestorIndex-lt$ancestors.Count;$ancestorIndex++){
+        $ancestor=$ancestors[$ancestorIndex]
+        $ancestorName=[string](Get-ObjectValue $ancestor 'name' (Get-ResourceNameFromId (ConvertTo-ResourceId(Get-ObjectValue $ancestor 'id' ''))))
+        if([string](Get-ObjectValue $ancestor 'ruleError' '')){
+            $inheritanceWarnings.Add("the rules of parent policy $ancestorName could not be read")
+            continue
+        }
+        foreach($entry in @(Get-FirewallPolicyRuleEntry -Policy $ancestor -KeyPrefix "inherited-$ancestorIndex" -InheritedFrom $ancestorName)){
+            if(@('NetworkRule','ApplicationRule')-contains$entry.Type){$entries.Add($entry)}
+        }
+    }
+    if($inheritanceWarnings.Count-gt0){
+        Add-MxVertex $Document $root 'inheritance-warning' '1' "<b>Inherited rules are incomplete:</b> $([System.Net.WebUtility]::HtmlEncode(($inheritanceWarnings-join'; ')))." $warningStyle 20 $nextY $pageWidth 45
+        $nextY+=57
+    }
+    $ruleError=[string](Get-ObjectValue $Policy 'ruleError' '')
+    $ownEntries=@()
+    if($ruleError){
+        Add-MxVertex $Document $root 'rule-error' '1' "<b>Rules could not be read:</b> $([System.Net.WebUtility]::HtmlEncode($ruleError))" $warningStyle 20 $nextY $pageWidth 45
+        $nextY+=57
+    }else{
+        $ownEntries=@(Get-FirewallPolicyRuleEntry -Policy $Policy -KeyPrefix 'own' -InheritedFrom '')
+        foreach($entry in $ownEntries){$entries.Add($entry)}
+    }
+    if(-not$ruleError-and$ownEntries.Count-eq0){
+        Add-MxVertex $Document $root 'no-rules' '1' 'This policy defines no rule collections of its own.' 'rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=10;' 20 $nextY $pageWidth 45
+        $nextY+=57
+    }
+
+    $sections=@(
+        @{Types=@('NatRule');Title='DNAT rules';Id='section-dnat'},
+        @{Types=@('NetworkRule');Title='Network rules';Id='section-network'},
+        @{Types=@('ApplicationRule');Title='Application rules';Id='section-application'}
+    )
+    $knownTypes=@($sections|ForEach-Object{$_.Types})
+    foreach($section in $sections){
+        $sectionEntries=@($entries|Where-Object{$section.Types-contains$_.Type})
+        if($sectionEntries.Count-eq0){continue}
+        $nextY=Add-FirewallRuleSection -Document $Document -Root $root -Title $section.Title -Entries $sectionEntries -IdPrefix $section.Id -StartY $nextY
+    }
+    # Empty filter collections and rule types this page does not know have no
+    # place in the evaluation order, so they are listed last rather than dropped.
+    $otherEntries=@($entries|Where-Object{$knownTypes-notcontains$_.Type})
+    if($otherEntries.Count-gt0){
+        $nextY=Add-FirewallRuleSection -Document $Document -Root $root -Title 'Other collections' -Entries $otherEntries -IdPrefix 'section-other' -StartY $nextY
+    }
+    Set-MxPageSize $page.Model 1460 $nextY
+}
+
 #endregion Enhanced draw.io layout engine
 
 function Export-DrawIoDocument {
@@ -2639,6 +3571,7 @@ function Export-DrawIoDocument {
         [string]$Path,
         [bool]$IncludeRuleDetailPages = $true,
         [bool]$IncludeDefaultNsgRules = $true,
+        [bool]$IncludeFirewallRules = $true,
         [ValidateRange(1,4)][int]$ResourcesPerRow = 2,
         [string[]]$VnetName,
         [string[]]$ResourceGroup,
@@ -2676,15 +3609,29 @@ function Export-DrawIoDocument {
     $detailPageIdByResourceId = @{}
     $nsgs = @(Get-DataRows $Data 'nsgs' | Sort-Object name)
     $routeTables = @(Get-DataRows $Data 'routeTables' | Sort-Object name)
+    $policyFirewallIds = @($networkIndex.FirewallRelationById.Keys)
     if ($isScoped) {
-        # A narrowed VNet set should not still emit a detail page for every NSG
-        # and route table in the tenant, so keep only those the scope reaches.
+        # A narrowed VNet set should not still emit a detail page for every NSG,
+        # route table, and firewall policy in the tenant, so keep only those the
+        # scope reaches.
         $reachableIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $scopedFirewallIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         foreach ($vnet in $sortedVnets) {
             $scopedVnetId = ConvertTo-ResourceId (Get-ObjectValue $vnet 'id')
+            # Secured-hub firewalls have no subnet and are reached through the hub.
+            foreach ($hubConnection in @($networkIndex.HubConnectionsByVnetId[$scopedVnetId])) {
+                if ($null -eq $hubConnection) { continue }
+                $hubId = ConvertTo-ResourceId (Get-ObjectValue $hubConnection 'virtualHubId')
+                foreach ($firewallId in @($networkIndex.FirewallIdsByHubId[$hubId])) {
+                    if ($firewallId) { $null = $scopedFirewallIds.Add([string]$firewallId) }
+                }
+            }
             foreach ($subnet in @($networkIndex.SubnetsByVnetId[$scopedVnetId])) {
                 if ($null -eq $subnet) { continue }
                 $subnetId = ConvertTo-ResourceId (Get-ObjectValue $subnet 'id')
+                foreach ($firewallId in @($networkIndex.FirewallIdsBySubnetId[$subnetId])) {
+                    if ($firewallId) { $null = $scopedFirewallIds.Add([string]$firewallId) }
+                }
                 $null = $reachableIds.Add((ConvertTo-ResourceId (Get-ObjectValue $subnet 'nsgId')))
                 $null = $reachableIds.Add((ConvertTo-ResourceId (Get-ObjectValue $subnet 'routeTableId')))
                 foreach ($nic in @($networkIndex.NicRowsBySubnetId[$subnetId])) {
@@ -2700,8 +3647,16 @@ function Export-DrawIoDocument {
         }
         $nsgs = @($nsgs | Where-Object { $reachableIds.Contains((ConvertTo-ResourceId (Get-ObjectValue $_ 'id'))) })
         $routeTables = @($routeTables | Where-Object { $reachableIds.Contains((ConvertTo-ResourceId (Get-ObjectValue $_ 'id'))) })
+        $policyFirewallIds = @($scopedFirewallIds)
+    }
+    $firewallPolicies = @()
+    if ($IncludeFirewallRules) {
+        $firewallPolicies = @(Get-ReachableFirewallPolicy -Index $networkIndex -FirewallIds $policyFirewallIds)
     }
     if ($IncludeRuleDetailPages) {
+        for ($index = 0; $index -lt $firewallPolicies.Count; $index++) {
+            $detailPageIdByResourceId[(ConvertTo-ResourceId (Get-ObjectValue $firewallPolicies[$index] 'id'))] = "fwpolicy-detail-$($index + 1)"
+        }
         for ($index = 0; $index -lt $nsgs.Count; $index++) {
             $detailPageIdByResourceId[(ConvertTo-ResourceId (Get-ObjectValue $nsgs[$index] 'id'))] = "nsg-detail-$($index + 1)"
         }
@@ -2710,7 +3665,7 @@ function Export-DrawIoDocument {
         }
     }
     $plannedDetailPages = 0
-    if ($IncludeRuleDetailPages) { $plannedDetailPages = $nsgs.Count + $routeTables.Count }
+    if ($IncludeRuleDetailPages) { $plannedDetailPages = $nsgs.Count + $routeTables.Count + $firewallPolicies.Count }
     $plannedPages = 1 + $sortedVnets.Count + $plannedDetailPages
     $builtPages = 0
     Write-StatusProgress 'Building diagram pages' 'Network overview' $builtPages $plannedPages
@@ -2739,6 +3694,13 @@ function Export-DrawIoDocument {
             $id = ConvertTo-ResourceId (Get-ObjectValue $routeTable 'id')
             Write-StatusProgress 'Building diagram pages' "Route table detail: $(Get-ObjectValue $routeTable 'name' '')" $builtPages $plannedPages
             New-RouteTableDetailPage -Document $document -MxFile $mxFile -Index $networkIndex -RouteTable $routeTable -PageId $detailPageIdByResourceId[$id]
+            $detailPages++; $builtPages++
+        }
+        foreach ($firewallPolicy in $firewallPolicies) {
+            $id = ConvertTo-ResourceId (Get-ObjectValue $firewallPolicy 'id')
+            Write-StatusProgress 'Building diagram pages' "Firewall policy detail: $(Get-ObjectValue $firewallPolicy 'name' '')" $builtPages $plannedPages
+            New-FirewallPolicyDetailPage -Document $document -MxFile $mxFile -Index $networkIndex -Policy $firewallPolicy `
+                -PageId $detailPageIdByResourceId[$id] -DetailPageIdByResourceId $detailPageIdByResourceId
             $detailPages++; $builtPages++
         }
     }
@@ -2792,7 +3754,8 @@ try {
         Write-StatusDetail $resolvedInput
     } else {
         Write-StatusStep 1 3 'Querying Azure Resource Graph'
-        $networkData = Get-AzureNetworkData -Subscriptions $SubscriptionId -RequestedTenantId $TenantId
+        $networkData = Get-AzureNetworkData -Subscriptions $SubscriptionId -RequestedTenantId $TenantId `
+            -SkipFirewallRules:$SkipFirewallRules
         if ($ExportDataPath) {
             $resolvedExport = Resolve-LocalFilePath $ExportDataPath
             $exportDirectory = [System.IO.Path]::GetDirectoryName($resolvedExport)
@@ -2810,16 +3773,18 @@ try {
     $result = Export-DrawIoDocument -Data $networkData -Path $OutputPath `
         -IncludeRuleDetailPages (-not $SkipRuleDetailPages.IsPresent) `
         -IncludeDefaultNsgRules (-not $SkipDefaultNsgRules.IsPresent) `
+        -IncludeFirewallRules (-not $SkipFirewallRules.IsPresent) `
         -ResourcesPerRow $ResourcesPerRow `
         -VnetName $VnetName -ResourceGroup $ResourceGroup -ExcludeSubscriptionId $ExcludeSubscriptionId
     $runTimer.Stop()
     Write-StatusMessage ''
     Write-StatusMessage "Done in $(Format-ElapsedTime $runTimer.Elapsed)" 'Green'
     Write-StatusMessage ''
-    Write-Output "Created $($result.Path) from $($result.Subscriptions) subscription(s), with 1 overview, $($result.VnetPages) VNet page(s), $($result.DetailPages) NSG/route detail page(s), $($result.UnmappedResources) unmapped resource(s), and $($result.TotalPages) total page(s)."
+    Write-Output "Created $($result.Path) from $($result.Subscriptions) subscription(s), with 1 overview, $($result.VnetPages) VNet page(s), $($result.DetailPages) detail page(s), $($result.UnmappedResources) unmapped resource(s), and $($result.TotalPages) total page(s)."
 }
 catch {
     Complete-StatusProgress 'Querying Azure Resource Graph'
+    Complete-StatusProgress 'Reading firewall policies'
     Complete-StatusProgress 'Building diagram pages'
     if ($runTimer.IsRunning) { $runTimer.Stop() }
 

@@ -24,12 +24,14 @@ picture and click your way down to the details.
 region, and peerings. Click a VNet to open its page.
 
 **2. One page per VNet.** Subnets are drawn as containers holding what lives in them:
-VMs, NICs, scale sets, private endpoints, and VNet-injected services such as Container Apps
-environments. Around the VNet, three lanes show what it connects to:
+VMs, NICs, scale sets, private endpoints, VNet-injected services such as Container Apps
+environments, and subnet-deployed services such as Application Gateway, Azure Firewall,
+virtual network gateways, and Azure Bastion. Around the VNet, three lanes show what it
+connects to:
 
 - **Security & routing:** NSGs and route tables
-- **Azure connectivity:** public IPs, NAT gateways, load balancers, application gateways,
-  Azure Firewalls, VPN/ExpressRoute gateways, and Bastion hosts
+- **Azure connectivity:** public IPs, NAT gateways, load balancers, and linked Azure
+  resources that attach to or span the VNet
 - **Remote & hybrid:** peered VNets, on-premises gateways, ExpressRoute circuits, and
   Virtual WAN hubs
 
@@ -43,6 +45,8 @@ over any shape to see its Azure resource ID.
 **3. NSG and route-table pages.** Click an NSG to see its rules laid out the way the portal
 lists them: inbound and outbound, custom and default, with application security groups
 resolved and each rule's description shown on hover. Route tables get the same treatment.
+Click an Azure Firewall to open its firewall policy page, with every rule collection group,
+collection, and rule.
 
 ![VNetAtlas NSG View](assets/vnetatlas-nsg.png)
 *NSG detail page showing inbound and outbound security rules.*
@@ -58,8 +62,8 @@ with draw.io layers.
 
 ## Made for reviews
 
-- **Read-only.** VNetAtlas runs Resource Graph queries and nothing else. Reader access is
-  enough.
+- **Read-only.** VNetAtlas runs Resource Graph queries, plus read-only (`GET`) Azure
+  Resource Manager requests for firewall policy rules. Reader access is enough.
 - **Focus on what matters.** Narrow large tenants with `-VnetName`, `-ResourceGroup`, or
   `-ExcludeSubscriptionId`.
 
@@ -94,7 +98,8 @@ live; `Input` regenerates a diagram from exported JSON; `Version` and `Help` pri
 | `-InputDataPath` | `string` | Input (**required**) | Build from exported JSON instead of querying Azure. |
 | `-OutputPath` | `string` | both | Target `.drawio` file. Defaults to `.\<yyyyMMdd_HHmm>_Azure-Network.drawio`. |
 | `-ResourcesPerRow` | `int` | both | Resources per subnet row, from 1 to 4. Default: `2`. |
-| `-SkipRuleDetailPages` | `switch` | both | Omit NSG and route-table detail pages. |
+| `-SkipRuleDetailPages` | `switch` | both | Omit NSG, route-table, and firewall-policy detail pages. Firewall policy rules are still collected. |
+| `-SkipFirewallRules` | `switch` | both | Do not read firewall policy rules and omit the firewall-policy detail pages. |
 | `-SkipDefaultNsgRules` | `switch` | both | Omit Azure's built-in rules from NSG detail pages. |
 | `-Quiet` | `switch` | both | Suppress the banner and progress output. The summary line and warnings are still written. |
 | `-Verbose` | `switch` | Azure | Narrate subscription selection and each Resource Graph query. |
@@ -149,10 +154,12 @@ VNetAtlas currently queries and relates:
 - VMs, VM scale sets, and network interfaces
 - Public IP addresses and prefixes, NSGs, NAT gateways, and route tables
 - Load balancers and application gateways, including frontend and backend relationships
-- Azure Firewalls, private endpoints, and their target resources
+- Azure Firewalls and their firewall policies, including parent policies
+- Private endpoints and their target resources
 - VPN/ExpressRoute gateways, connections, local gateways, and ExpressRoute circuits
 - Azure Bastion hosts
-- Virtual Hubs, hub VNet connections, and associated ExpressRoute gateways
+- Virtual Hubs, hub VNet connections, and associated ExpressRoute gateways and secured-hub
+  firewalls
 
 A resource appears on a VNet page only when Azure Resource Graph exposes a subnet, NIC,
 backend, peering, gateway connection, or Virtual WAN hub connection relationship. Other
@@ -163,13 +170,23 @@ Subnet references also identify VNet-injected services that are not queried dire
 as Container Apps environments, App Service integration, flexible database servers, and
 Private Link services. These shapes are labelled `Detected from subnet reference`.
 
+### Firewall policy rules
+
+Resource Graph does not return firewall policy rules, so VNetAtlas reads them with read-only
+Azure Resource Manager requests: at least two per policy, including parent policies.
+`-ExportDataPath` saves them for offline reruns, and `-SkipFirewallRules` skips them. If a
+policy cannot be read, its page says so and the export continues.
+
+Not shown: classic rules on firewalls without a policy, the addresses inside IP groups, and
+policies that no firewall uses.
+
 ### Scope and limitations
 
 - `-VnetName`, `-ResourceGroup`, and `-ExcludeSubscriptionId` combine with AND and are
   applied before pages are built.
 - With filters active, the network overview shows only the selected VNets, detail pages
-  include only NSGs and route tables reachable from them, and the `Unmapped Resources` page
-  is suppressed.
+  include only NSGs, route tables, and firewall policies reachable from them, and the
+  `Unmapped Resources` page is suppressed.
 - If no VNet matches, the script stops without creating an empty diagram.
 - Private DNS zones, VNet links, record sets, and private-endpoint DNS zone groups are not
   collected.

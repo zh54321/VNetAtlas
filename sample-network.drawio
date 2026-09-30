@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<mxfile host="VNetAtlas" modified="2026-09-29T06:23:55.0752547Z" agent="Export-VNetAtlas.ps1" version="V20260914" type="device">
+<mxfile host="VNetAtlas" modified="2026-09-30T18:28:13.5914221Z" agent="Export-VNetAtlas.ps1" version="V20260929" type="device">
   <diagram id="network-overview" name="Network Overview">
     <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1480" pageHeight="1100" math="0" shadow="0">
       <root>
@@ -34,7 +34,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="vnet-page-1" name="vnet-hub - Demo Subscription" azureSubscriptionId="demo" azureSubscriptionName="Demo Subscription">
-    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1860" pageHeight="2185" math="0" shadow="0">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1860" pageHeight="2336" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" value="Resources" parent="0" />
@@ -47,229 +47,236 @@
             <mxGeometry x="20" y="15" width="220" height="30" as="geometry" />
           </mxCell>
         </object>
-        <mxCell id="vnet-summary" value="&lt;b&gt;VNet inventory&lt;/b&gt; &amp;nbsp; Subnets: 4 &amp;nbsp; | &amp;nbsp; Attached resources: 16 &amp;nbsp; | &amp;nbsp; Public IPs: 3 &amp;nbsp; | &amp;nbsp; NSGs: 1 &amp;nbsp; | &amp;nbsp; Peerings: 1 &amp;nbsp; | &amp;nbsp; Hybrid: 11 &amp;nbsp; | &amp;nbsp; Bastion: 1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+        <mxCell id="vnet-summary" value="&lt;b&gt;VNet inventory&lt;/b&gt; &amp;nbsp; Subnets: 5 &amp;nbsp; | &amp;nbsp; Attached resources: 18 &amp;nbsp; | &amp;nbsp; Public IPs: 4 &amp;nbsp; | &amp;nbsp; NSGs: 1 &amp;nbsp; | &amp;nbsp; Peerings: 1 &amp;nbsp; | &amp;nbsp; Hybrid: 11 &amp;nbsp; | &amp;nbsp; Bastion: 1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
           <mxGeometry x="260" y="15" width="1580" height="30" as="geometry" />
         </mxCell>
         <mxCell id="security-lane" value="&lt;b&gt;Security &amp;amp; routing&lt;/b&gt;" style="swimlane;html=1;rounded=1;startSize=38;fillColor=#fffaf0;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="20" y="60" width="220" height="2026" as="geometry" />
+          <mxGeometry x="20" y="60" width="220" height="2177" as="geometry" />
         </mxCell>
         <object id="vnet" label="&lt;b&gt;vnet-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual network&lt;/i&gt;&lt;/font&gt;&lt;br&gt;10.0.0.0/16&lt;br&gt;&lt;font color='#555555'&gt;Subscription: Demo Subscription (demo)&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;RG: rg-net | switzerlandnorth&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub" azureResourceType="Microsoft.Network/virtualNetworks" tags="vnet vnet-hub" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub">
           <mxCell style="swimlane;html=1;rounded=1;startSize=90;fillColor=#e6f2ff;strokeColor=#0078d4;strokeWidth=2;fontSize=12;" vertex="1" parent="1">
-            <mxGeometry x="280" y="60" width="950" height="1865" as="geometry" />
+            <mxGeometry x="280" y="60" width="950" height="2016" as="geometry" />
           </mxCell>
         </object>
         <mxCell id="connectivity-lane" value="&lt;b&gt;Azure connectivity&lt;/b&gt;" style="swimlane;html=1;rounded=1;startSize=38;fillColor=#f2fbf5;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1270" y="60" width="250" height="2026" as="geometry" />
+          <mxGeometry x="1270" y="60" width="250" height="2177" as="geometry" />
         </mxCell>
         <mxCell id="external-lane" value="&lt;b&gt;Remote &amp;amp; hybrid&lt;/b&gt;" style="swimlane;html=1;rounded=1;startSize=38;fillColor=#f8f3fc;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1560" y="60" width="280" height="2026" as="geometry" />
+          <mxGeometry x="1560" y="60" width="280" height="2177" as="geometry" />
         </mxCell>
         <object id="subnet-1" label="&lt;b&gt;AzureFirewallSubnet&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.1.0/24&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Disabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurefirewallsubnet" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet azurefirewallsubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurefirewallsubnet">
           <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
-            <mxGeometry x="25" y="90" width="900" height="338" as="geometry">
+            <mxGeometry x="25" y="90" width="900" height="232" as="geometry">
               <mxRectangle width="900" height="116" as="alternateBounds" />
             </mxGeometry>
           </mxCell>
         </object>
-        <object id="subnet-2" label="&lt;b&gt;GatewaySubnet&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.2.0/24&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Disabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/gatewaysubnet" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet gatewaysubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/gatewaysubnet">
-          <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
-            <mxGeometry x="25" y="453" width="900" height="656" as="geometry">
-              <mxRectangle width="900" height="116" as="alternateBounds" />
-            </mxGeometry>
-          </mxCell>
-        </object>
-        <object id="subnet-3" label="&lt;b&gt;AzureBastionSubnet&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.3.0/26&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Disabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurebastionsubnet" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet azurebastionsubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurebastionsubnet">
-          <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
-            <mxGeometry x="25" y="1134" width="900" height="338" as="geometry">
-              <mxRectangle width="900" height="116" as="alternateBounds" />
-            </mxGeometry>
-          </mxCell>
-        </object>
-        <object id="subnet-4" label="&lt;b&gt;shared-services&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.4.0/24&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; nsg-shared &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Enabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/shared-services" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/shared-services">
-          <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
-            <mxGeometry x="25" y="1497" width="900" height="338" as="geometry">
-              <mxRectangle width="900" height="116" as="alternateBounds" />
-            </mxGeometry>
-          </mxCell>
-        </object>
-        <object id="resource-1" label="&lt;b&gt;nic-mgmt&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Network interface&lt;/i&gt;&lt;/font&gt;&lt;br&gt;10.0.4.4&lt;br&gt;&lt;font color='#666666'&gt;Static&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networkinterfaces/nic-mgmt" azureResourceType="Microsoft.Network/networkInterfaces" tags="nic internal nic-mgmt shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networkinterfaces/nic-mgmt">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Network_Interfaces.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-4">
+        <object id="resource-1" label="&lt;b&gt;fw-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Azure Firewall&lt;/i&gt;&lt;/font&gt;&lt;br&gt;AZFW_VNet Premium&lt;br&gt;10.0.1.4&lt;br&gt;Policy: fwpolicy-hub&lt;br&gt;Zones: 1, 2, 3 | Succeeded" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/azurefirewalls/fw-hub" azureResourceType="Microsoft.Network/azureFirewalls" link="data:page/id,fwpolicy-detail-2" tags="firewall internal fw-hub azurefirewallsubnet" tooltip="Open firewall policy rules&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/azurefirewalls/fw-hub">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Firewalls.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-1">
             <mxGeometry x="18" y="126" width="422" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="resource-2" label="&lt;b&gt;vm-mgmt&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual machine&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard_B2ms&lt;br&gt;&lt;font color='#666666'&gt;Windows&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.compute/virtualmachines/vm-mgmt" azureResourceType="Microsoft.Compute/virtualMachines" tags="vm internal vm-mgmt shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.compute/virtualmachines/vm-mgmt">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/compute/Virtual_Machine.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-4">
-            <mxGeometry x="460" y="126" width="422" height="90" as="geometry" />
+        <object id="subnet-2" label="&lt;b&gt;AzureFirewallManagementSubnet&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.5.0/26&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Disabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurefirewallmanagementsubnet" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet azurefirewallmanagementsubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurefirewallmanagementsubnet">
+          <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
+            <mxGeometry x="25" y="347" width="900" height="232" as="geometry">
+              <mxRectangle width="900" height="116" as="alternateBounds" />
+            </mxGeometry>
           </mxCell>
         </object>
-        <object id="resource-3" label="&lt;b&gt;pe-keyvault&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Private endpoint&lt;/i&gt;&lt;/font&gt;&lt;br&gt;vault&lt;br&gt;&lt;font color='#666666'&gt;Approved&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/privateendpoints/pe-keyvault" azureResourceType="Microsoft.Network/privateEndpoints" tags="privateendpoint internal pe-keyvault shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/privateendpoints/pe-keyvault">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Private_Endpoint.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-4">
+        <object id="resource-2" label="&lt;b&gt;fw-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Firewall management interface&lt;/i&gt;&lt;/font&gt;&lt;br&gt;10.0.5.4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/azurefirewalls/fw-hub/azurefirewallipconfigurations/management" azureResourceType="Microsoft.Network/azureFirewalls/azureFirewallIpConfigurations" tags="firewallmanagementinterface internal fw-hub azurefirewallmanagementsubnet" tooltip="Management interface of Azure Firewall fw-hub&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/azurefirewalls/fw-hub/azurefirewallipconfigurations/management">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Firewalls.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-2">
+            <mxGeometry x="18" y="126" width="422" height="90" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="subnet-3" label="&lt;b&gt;GatewaySubnet&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.2.0/24&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Disabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/gatewaysubnet" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet gatewaysubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/gatewaysubnet">
+          <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
+            <mxGeometry x="25" y="604" width="900" height="762" as="geometry">
+              <mxRectangle width="900" height="116" as="alternateBounds" />
+            </mxGeometry>
+          </mxCell>
+        </object>
+        <object id="resource-3" label="&lt;b&gt;ergw-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual network gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;ErGw1AZ&lt;br&gt;ExpressRoute&lt;br&gt;10.0.2.5" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/ergw-hub" azureResourceType="Microsoft.Network/virtualNetworkGateways" tags="gateway internal ergw-hub gatewaysubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/ergw-hub">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_Network_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-3">
+            <mxGeometry x="18" y="126" width="422" height="90" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="resource-4" label="&lt;b&gt;vpngw-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual network gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;VpnGw1AZ&lt;br&gt;Vpn&lt;br&gt;10.0.2.4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/vpngw-hub" azureResourceType="Microsoft.Network/virtualNetworkGateways" tags="gateway internal vpngw-hub gatewaysubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/vpngw-hub">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_Network_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-3">
             <mxGeometry x="18" y="232" width="422" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-1" label="&lt;b&gt;fw-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Azure Firewall&lt;/i&gt;&lt;/font&gt;&lt;br&gt;AZFW_VNet&lt;br&gt;Standard&lt;br&gt;10.0.1.4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/azurefirewalls/fw-hub" azureResourceType="Microsoft.Network/azureFirewalls" tags="firewall connectivity fw-hub" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/azurefirewalls/fw-hub">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Firewalls.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
+        <object id="subnet-4" label="&lt;b&gt;AzureBastionSubnet&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.3.0/26&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Disabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurebastionsubnet" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet azurebastionsubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/azurebastionsubnet">
+          <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
+            <mxGeometry x="25" y="1391" width="900" height="232" as="geometry">
+              <mxRectangle width="900" height="116" as="alternateBounds" />
+            </mxGeometry>
+          </mxCell>
+        </object>
+        <object id="resource-5" label="&lt;b&gt;bastion-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Azure Bastion&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard&lt;br&gt;Scale units: 2&lt;br&gt;Succeeded&lt;br&gt;Tunneling, IP Connect&lt;br&gt;10.0.3.4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/bastionhosts/bastion-hub" azureResourceType="Microsoft.Network/bastionHosts" tags="bastion internal bastion-hub azurebastionsubnet" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/bastionhosts/bastion-hub">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Bastions.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-4">
+            <mxGeometry x="18" y="126" width="422" height="90" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="subnet-5" label="&lt;b&gt;shared-services&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.0.4.0/24&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; nsg-shared &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; None&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Enabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/shared-services" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub/subnets/shared-services">
+          <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
+            <mxGeometry x="25" y="1648" width="900" height="338" as="geometry">
+              <mxRectangle width="900" height="116" as="alternateBounds" />
+            </mxGeometry>
+          </mxCell>
+        </object>
+        <object id="resource-6" label="&lt;b&gt;nic-mgmt&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Network interface&lt;/i&gt;&lt;/font&gt;&lt;br&gt;10.0.4.4&lt;br&gt;&lt;font color='#666666'&gt;Static&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networkinterfaces/nic-mgmt" azureResourceType="Microsoft.Network/networkInterfaces" tags="nic internal nic-mgmt shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networkinterfaces/nic-mgmt">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Network_Interfaces.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-5">
+            <mxGeometry x="18" y="126" width="422" height="90" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="resource-7" label="&lt;b&gt;vm-mgmt&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual machine&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard_B2ms&lt;br&gt;&lt;font color='#666666'&gt;Windows&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.compute/virtualmachines/vm-mgmt" azureResourceType="Microsoft.Compute/virtualMachines" tags="vm internal vm-mgmt shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.compute/virtualmachines/vm-mgmt">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/compute/Virtual_Machine.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-5">
+            <mxGeometry x="460" y="126" width="422" height="90" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="resource-8" label="&lt;b&gt;pe-keyvault&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Private endpoint&lt;/i&gt;&lt;/font&gt;&lt;br&gt;vault&lt;br&gt;&lt;font color='#666666'&gt;Approved&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/privateendpoints/pe-keyvault" azureResourceType="Microsoft.Network/privateEndpoints" tags="privateendpoint internal pe-keyvault shared-services" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/privateendpoints/pe-keyvault">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Private_Endpoint.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-5">
+            <mxGeometry x="18" y="232" width="422" height="90" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="connectivity-1" label="&lt;b&gt;pip-fw&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.30&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-fw" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-fw" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-fw">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="216" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-2" label="&lt;b&gt;pip-fw&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.30&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-fw" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-fw" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-fw">
+        <object id="connectivity-2" label="&lt;b&gt;pip-fw-management&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.32&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-fw-management" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-fw-management" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-fw-management">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="322" width="226" height="90" as="geometry" />
+            <mxGeometry x="12" y="473" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-3" label="&lt;b&gt;ergw-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual network gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;ErGw1AZ&lt;br&gt;ExpressRoute&lt;br&gt;10.0.2.5" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/ergw-hub" azureResourceType="Microsoft.Network/virtualNetworkGateways" tags="gateway connectivity ergw-hub" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/ergw-hub">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_Network_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="579" width="226" height="90" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="connectivity-4" label="&lt;b&gt;vpngw-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual network gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;VpnGw1AZ&lt;br&gt;Vpn&lt;br&gt;10.0.2.4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/vpngw-hub" azureResourceType="Microsoft.Network/virtualNetworkGateways" tags="gateway connectivity vpngw-hub" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworkgateways/vpngw-hub">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_Network_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="685" width="226" height="90" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="connectivity-5" label="&lt;b&gt;pip-vpn&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.40&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-vpn" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-vpn" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-vpn">
+        <object id="connectivity-3" label="&lt;b&gt;pip-vpn&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.40&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-vpn" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-vpn" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-vpn">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="791" width="226" height="90" as="geometry" />
+            <mxGeometry x="12" y="1260" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-1" label="&lt;b&gt;erc-unmapped&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;ExpressRoute circuit&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Example Provider&lt;br&gt;Zurich&lt;br&gt;1000 Mbps&lt;br&gt;Enabled" azureResourceId="/subscriptions/demo/resourcegroups/rg-orphan/providers/microsoft.network/expressroutecircuits/erc-unmapped" azureResourceType="Microsoft.Network/expressRouteCircuits" tags="expressroutecircuit external erc-unmapped" tooltip="/subscriptions/demo/resourcegroups/rg-orphan/providers/microsoft.network/expressroutecircuits/erc-unmapped">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/ExpressRoute_Circuits.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="579" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="730" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-2" label="&lt;b&gt;Unresolved remote endpoint&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;External endpoint&lt;/i&gt;&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;Endpoint ID was not returned&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-unresolved/unresolved-remote-endpoint" tags="genericexternal external unresolved-remote-endpoint" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-unresolved/unresolved-remote-endpoint">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/general/Resource.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="685" width="256" height="90" as="geometry" />
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/general/All_Resources.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
+            <mxGeometry x="12" y="836" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-3" label="&lt;b&gt;lng-branch&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Local network gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;198.51.100.10&lt;br&gt;172.16.0.0/16&lt;br&gt;BGP ASN: 65010" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/localnetworkgateways/lng-branch" azureResourceType="Microsoft.Network/localNetworkGateways" tags="localnetworkgateway external lng-branch" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/localnetworkgateways/lng-branch">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Local_Network_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="791" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="942" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-4" label="&lt;b&gt;lng-datacenter&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Local network gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;198.51.100.20&lt;br&gt;172.20.0.0/16&lt;br&gt;BGP ASN: 65020" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/localnetworkgateways/lng-datacenter" azureResourceType="Microsoft.Network/localNetworkGateways" tags="localnetworkgateway external lng-datacenter" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/localnetworkgateways/lng-datacenter">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Local_Network_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="897" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="1048" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-5" label="&lt;b&gt;vpngw-remote&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Remote virtual network gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Vpn&lt;br&gt;VpnGw1" azureResourceId="/subscriptions/demo/resourcegroups/rg-remote/providers/microsoft.network/virtualnetworkgateways/vpngw-remote" azureResourceType="Microsoft.Network/virtualNetworkGateways" tags="remotegateway external vpngw-remote" tooltip="/subscriptions/demo/resourcegroups/rg-remote/providers/microsoft.network/virtualnetworkgateways/vpngw-remote">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_Network_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="1003" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="1154" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-6" label="&lt;b&gt;bastion-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Azure Bastion&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard&lt;br&gt;Scale units: 2&lt;br&gt;Succeeded&lt;br&gt;Tunneling, IP Connect" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/bastionhosts/bastion-hub" azureResourceType="Microsoft.Network/bastionHosts" tags="bastion connectivity bastion-hub" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/bastionhosts/bastion-hub">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Bastions.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="1260" width="226" height="90" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="connectivity-7" label="&lt;b&gt;pip-bastion&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.50&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-bastion" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-bastion" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-bastion">
+        <object id="connectivity-4" label="&lt;b&gt;pip-bastion&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.50&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-bastion" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-bastion" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-bastion">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="1366" width="226" height="90" as="geometry" />
+            <mxGeometry x="12" y="1517" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="security-1" label="&lt;b&gt;nsg-shared&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Network security group&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Custom rules: 3&lt;br&gt;&lt;font color='#0078d4'&gt;Open rules&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networksecuritygroups/nsg-shared" azureResourceType="Microsoft.Network/networkSecurityGroups" link="data:page/id,nsg-detail-2" tags="nsg security nsg-shared" tooltip="Open NSG rule details&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networksecuritygroups/nsg-shared">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Network_Security_Groups.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#d6b656;fontSize=10;overflow=hidden;" vertex="1" parent="security-lane">
-            <mxGeometry x="12" y="1623" width="196" height="90" as="geometry" />
+            <mxGeometry x="12" y="1774" width="196" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-8" label="&lt;b&gt;kv-demo&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Key vault&lt;/i&gt;&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;Private Link target&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.keyvault/vaults/kv-demo" azureResourceType="Azure linked resource" tags="privatelinktarget connectivity kv-demo" tooltip="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.keyvault/vaults/kv-demo">
+        <object id="connectivity-5" label="&lt;b&gt;kv-demo&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Key vault&lt;/i&gt;&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;Private Link target&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.keyvault/vaults/kv-demo" azureResourceType="Azure linked resource" tags="privatelinktarget connectivity kv-demo" tooltip="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.keyvault/vaults/kv-demo">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Private_Link.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="1729" width="226" height="90" as="geometry" />
+            <mxGeometry x="12" y="1880" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-6" label="&lt;b&gt;vnet-spoke&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Remote virtual network&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Peering: Connected&lt;br&gt;&lt;font color='#0078d4'&gt;Open VNet page&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-spoke" azureResourceType="Microsoft.Network/virtualNetworks" link="data:page/id,vnet-page-2" tags="remotevnet external vnet-spoke" tooltip="Remote VNet: vnet-spoke&#xA;State: Connected&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-spoke">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_Networks.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="1910" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="2061" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="edge-1" label="" tags="connector attachment uses-nic">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="resource-2" target="resource-1">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="resource-7" target="resource-6">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
         <object id="edge-2" label="private link" tags="connector attachment private-link">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="resource-3" target="connectivity-8">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="resource-8" target="connectivity-5">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
         <object id="edge-3" label="protects subnet" tags="connector security protects-subnet">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=6 4;strokeColor=#b8860b;endArrow=none;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-security" source="security-1" target="subnet-4">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=6 4;strokeColor=#b8860b;endArrow=none;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-security" source="security-1" target="subnet-5">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-4" label="firewall subnet" tags="connector attachment firewall-subnet">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-1" target="subnet-1">
+        <object id="edge-4" label="public IP" tags="connector attachment public-ip">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-1" target="resource-1">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-5" label="public IP" tags="connector attachment public-ip">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-2" target="connectivity-1">
+        <object id="edge-5" label="management interface" tags="connector attachment management-interface">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="resource-1" target="resource-2">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-6" label="gateway subnet" tags="connector attachment gateway-subnet">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-3" target="subnet-2">
+        <object id="edge-6" label="management public IP" tags="connector attachment management-public-ip">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-2" target="resource-2">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-7" label="gateway subnet" tags="connector attachment gateway-subnet">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-4" target="subnet-2">
+        <object id="edge-7" label="public IP" tags="connector attachment public-ip">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-3" target="resource-4">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-8" label="public IP" tags="connector attachment public-ip">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-5" target="connectivity-4">
+        <object id="edge-8" label="Bastion public IP" tags="connector attachment bastion-public-ip">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-4" target="resource-5">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-9" label="Bastion subnet" tags="connector attachment bastion-subnet">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-6" target="subnet-3">
+        <object id="edge-9" label="&lt;b&gt;vpn-to-branch&lt;/b&gt;&lt;br&gt;IPsec | Connected | BGP" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-branch" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vpn-to-branch&lt;/b&gt;&lt;br&gt;ipsec-|-connected-|-bgp" tooltip="Connection: vpn-to-branch&#xA;Type: IPsec&#xA;Status: Connected&#xA;BGP enabled: True&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-branch">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-hybrid" source="resource-4" target="external-3">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-10" label="Bastion public IP" tags="connector attachment bastion-public-ip">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-7" target="connectivity-6">
+        <object id="edge-10" label="&lt;b&gt;vpn-to-datacenter&lt;/b&gt;&lt;br&gt;IPsec | Connected | BGP" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-datacenter" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vpn-to-datacenter&lt;/b&gt;&lt;br&gt;ipsec-|-connected-|-bgp" tooltip="Connection: vpn-to-datacenter&#xA;Type: IPsec&#xA;Status: Connected&#xA;BGP enabled: True&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-datacenter">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=28;" edge="1" parent="layer-hybrid" source="resource-4" target="external-4">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-11" label="&lt;b&gt;vpn-to-branch&lt;/b&gt;&lt;br&gt;IPsec | Connected | BGP" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-branch" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vpn-to-branch&lt;/b&gt;&lt;br&gt;ipsec-|-connected-|-bgp" tooltip="Connection: vpn-to-branch&#xA;Type: IPsec&#xA;Status: Connected&#xA;BGP enabled: True&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-branch">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-hybrid" source="connectivity-4" target="external-3">
+        <object id="edge-11" label="&lt;b&gt;vnet-to-vnet-remote&lt;/b&gt;&lt;br&gt;Vnet2Vnet | Connected" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vnet-to-vnet-remote" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vnet-to-vnet-remote&lt;/b&gt;&lt;br&gt;vnet2vnet-|-connected" tooltip="Connection: vnet-to-vnet-remote&#xA;Type: Vnet2Vnet&#xA;Status: Connected&#xA;BGP enabled: False&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vnet-to-vnet-remote">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=36;" edge="1" parent="layer-hybrid" source="resource-4" target="external-5">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-12" label="&lt;b&gt;vpn-to-datacenter&lt;/b&gt;&lt;br&gt;IPsec | Connected | BGP" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-datacenter" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vpn-to-datacenter&lt;/b&gt;&lt;br&gt;ipsec-|-connected-|-bgp" tooltip="Connection: vpn-to-datacenter&#xA;Type: IPsec&#xA;Status: Connected&#xA;BGP enabled: True&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-to-datacenter">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=28;" edge="1" parent="layer-hybrid" source="connectivity-4" target="external-4">
+        <object id="edge-12" label="&lt;b&gt;vpn-unresolved&lt;/b&gt;&lt;br&gt;IPsec | Unknown" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-unresolved" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vpn-unresolved&lt;/b&gt;&lt;br&gt;ipsec-|-unknown" tooltip="Connection: vpn-unresolved&#xA;Type: IPsec&#xA;Status: Unknown&#xA;BGP enabled: False&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-unresolved">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=44;" edge="1" parent="layer-hybrid" source="resource-4" target="external-2">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-13" label="&lt;b&gt;vnet-to-vnet-remote&lt;/b&gt;&lt;br&gt;Vnet2Vnet | Connected" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vnet-to-vnet-remote" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vnet-to-vnet-remote&lt;/b&gt;&lt;br&gt;vnet2vnet-|-connected" tooltip="Connection: vnet-to-vnet-remote&#xA;Type: Vnet2Vnet&#xA;Status: Connected&#xA;BGP enabled: False&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vnet-to-vnet-remote">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=36;" edge="1" parent="layer-hybrid" source="connectivity-4" target="external-5">
+        <object id="edge-13" label="&lt;b&gt;er-to-zurich&lt;/b&gt;&lt;br&gt;ExpressRoute | Connected | BGP" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/er-to-zurich" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;er-to-zurich&lt;/b&gt;&lt;br&gt;expressroute-|-connected-|-bgp" tooltip="Connection: er-to-zurich&#xA;Type: ExpressRoute&#xA;Status: Connected&#xA;BGP enabled: True&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/er-to-zurich">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-hybrid" source="resource-3" target="external-1">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-14" label="&lt;b&gt;vpn-unresolved&lt;/b&gt;&lt;br&gt;IPsec | Unknown" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-unresolved" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;vpn-unresolved&lt;/b&gt;&lt;br&gt;ipsec-|-unknown" tooltip="Connection: vpn-unresolved&#xA;Type: IPsec&#xA;Status: Unknown&#xA;BGP enabled: False&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/vpn-unresolved">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=44;" edge="1" parent="layer-hybrid" source="connectivity-4" target="external-2">
-            <mxGeometry relative="1" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="edge-15" label="&lt;b&gt;er-to-zurich&lt;/b&gt;&lt;br&gt;ExpressRoute | Connected | BGP" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/er-to-zurich" azureResourceType="Microsoft.Network/connections" tags="connector hybrid &lt;b&gt;er-to-zurich&lt;/b&gt;&lt;br&gt;expressroute-|-connected-|-bgp" tooltip="Connection: er-to-zurich&#xA;Type: ExpressRoute&#xA;Status: Connected&#xA;BGP enabled: True&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/connections/er-to-zurich">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-hybrid" source="connectivity-3" target="external-1">
-            <mxGeometry relative="1" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="edge-16" label="to-spoke" tags="connector peering to-spoke">
+        <object id="edge-14" label="to-spoke" tags="connector peering to-spoke">
           <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=8 4;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-peering" source="vnet" target="external-6">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
         <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;&lt;font color='#0078d4'&gt;Azure icon&lt;/font&gt; = Azure resource &amp;nbsp; | &amp;nbsp; Contained = VNet/subnet membership &amp;nbsp; | &amp;nbsp; Solid line = attachment/backend &amp;nbsp; | &amp;nbsp; Dashed line = security/configuration/peering &amp;nbsp; | &amp;nbsp; Purple line = hybrid connectivity &amp;nbsp; | &amp;nbsp; Click a remote VNet to open its page" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
-          <mxGeometry x="20" y="2111" width="1820" height="54" as="geometry" />
+          <mxGeometry x="20" y="2262" width="1820" height="54" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
   <diagram id="vnet-page-2" name="vnet-spoke - Demo Subscription" azureSubscriptionId="demo" azureSubscriptionName="Demo Subscription">
-    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1860" pageHeight="1626" math="0" shadow="0">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1860" pageHeight="1520" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" value="Resources" parent="0" />
@@ -287,22 +294,22 @@
           <mxGeometry x="260" y="15" width="1580" height="30" as="geometry" />
         </mxCell>
         <mxCell id="security-lane" value="&lt;b&gt;Security &amp;amp; routing&lt;/b&gt;" style="swimlane;html=1;rounded=1;startSize=38;fillColor=#fffaf0;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="20" y="60" width="220" height="1467" as="geometry" />
+          <mxGeometry x="20" y="60" width="220" height="1361" as="geometry" />
         </mxCell>
         <object id="vnet" label="&lt;b&gt;vnet-spoke&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual network&lt;/i&gt;&lt;/font&gt;&lt;br&gt;10.1.0.0/16&lt;br&gt;&lt;font color='#555555'&gt;Subscription: Demo Subscription (demo)&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;RG: rg-net | switzerlandnorth&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-spoke" azureResourceType="Microsoft.Network/virtualNetworks" tags="vnet vnet-spoke" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-spoke">
           <mxCell style="swimlane;html=1;rounded=1;startSize=90;fillColor=#e6f2ff;strokeColor=#0078d4;strokeWidth=2;fontSize=12;" vertex="1" parent="1">
-            <mxGeometry x="280" y="60" width="950" height="1094" as="geometry" />
+            <mxGeometry x="280" y="60" width="950" height="988" as="geometry" />
           </mxCell>
         </object>
         <mxCell id="connectivity-lane" value="&lt;b&gt;Azure connectivity&lt;/b&gt;" style="swimlane;html=1;rounded=1;startSize=38;fillColor=#f2fbf5;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1270" y="60" width="250" height="1467" as="geometry" />
+          <mxGeometry x="1270" y="60" width="250" height="1361" as="geometry" />
         </mxCell>
         <mxCell id="external-lane" value="&lt;b&gt;Remote &amp;amp; hybrid&lt;/b&gt;" style="swimlane;html=1;rounded=1;startSize=38;fillColor=#f8f3fc;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1560" y="60" width="280" height="1467" as="geometry" />
+          <mxGeometry x="1560" y="60" width="280" height="1361" as="geometry" />
         </mxCell>
         <object id="subnet-1" label="&lt;b&gt;workload&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Subnet&lt;/i&gt;&lt;/font&gt; &amp;nbsp; &lt;font color='#555555'&gt;10.1.1.0/24&lt;/font&gt;&lt;br&gt;&lt;font color='#444444'&gt;&lt;b&gt;NSG:&lt;/b&gt; nsg-workload &amp;nbsp; | &amp;nbsp; &lt;b&gt;UDR:&lt;/b&gt; rt-spoke &amp;nbsp; | &amp;nbsp; &lt;b&gt;NAT:&lt;/b&gt; nat-spoke&lt;/font&gt;&lt;br&gt;&lt;font color='#555555'&gt;&lt;b&gt;Delegation:&lt;/b&gt; None &amp;nbsp; | &amp;nbsp; &lt;b&gt;Service endpoints:&lt;/b&gt; Microsoft.KeyVault, Microsoft.Storage&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;&lt;b&gt;PE policies:&lt;/b&gt; Enabled &amp;nbsp; | &amp;nbsp; &lt;b&gt;PLS policies:&lt;/b&gt; Enabled&lt;/font&gt;&lt;br&gt;&lt;font color='#999999'&gt;&lt;b&gt;Occupants:&lt;/b&gt; not reported&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-spoke/subnets/workload" azureResourceType="Microsoft.Network/virtualNetworks/subnets" tags="subnet workload" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-spoke/subnets/workload">
           <mxCell style="swimlane;html=1;rounded=1;collapsible=1;startSize=116;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="vnet">
-            <mxGeometry x="25" y="90" width="900" height="974" as="geometry">
+            <mxGeometry x="25" y="90" width="900" height="868" as="geometry">
               <mxRectangle width="900" height="116" as="alternateBounds" />
             </mxGeometry>
           </mxCell>
@@ -322,9 +329,14 @@
             <mxGeometry x="18" y="232" width="422" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="resource-4" label="&lt;b&gt;vmss-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual machine scale set&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard_D2s_v5&lt;br&gt;Instances: 3&lt;br&gt;Orchestration: Uniform&lt;br&gt;Upgrade: Rolling" azureResourceId="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.compute/virtualmachinescalesets/vmss-web" azureResourceType="Microsoft.Compute/virtualMachineScaleSets" tags="vmss internal vmss-web workload" tooltip="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.compute/virtualmachinescalesets/vmss-web">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/compute/VM_Scale_Sets.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-1">
+        <object id="resource-4" label="&lt;b&gt;appgw-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Application gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;WAF_v2&lt;br&gt;WAF_v2&lt;br&gt;Private IPs: 10.1.1.20" azureResourceId="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/applicationgateways/appgw-web" azureResourceType="Microsoft.Network/applicationGateways" tags="applicationgateway internal appgw-web workload" tooltip="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/applicationgateways/appgw-web">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Application_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-1">
             <mxGeometry x="18" y="338" width="422" height="90" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="resource-5" label="&lt;b&gt;vmss-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual machine scale set&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard_D2s_v5&lt;br&gt;Instances: 3&lt;br&gt;Orchestration: Uniform&lt;br&gt;Upgrade: Rolling" azureResourceId="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.compute/virtualmachinescalesets/vmss-web" azureResourceType="Microsoft.Compute/virtualMachineScaleSets" tags="vmss internal vmss-web workload" tooltip="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.compute/virtualmachinescalesets/vmss-web">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/compute/VM_Scale_Sets.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#0078d4;fontSize=10;overflow=hidden;" vertex="1" parent="subnet-1">
+            <mxGeometry x="460" y="338" width="422" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="security-1" label="&lt;b&gt;nsg-nic-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Network security group&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Custom rules: 1&lt;br&gt;&lt;font color='#0078d4'&gt;Open rules&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networksecuritygroups/nsg-nic-web" azureResourceType="Microsoft.Network/networkSecurityGroups" link="data:page/id,nsg-detail-1" tags="nsg security nsg-nic-web" tooltip="Open NSG rule details&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/networksecuritygroups/nsg-nic-web">
@@ -347,63 +359,58 @@
             <mxGeometry x="12" y="534" width="196" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-1" label="&lt;b&gt;appgw-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Application gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;WAF_v2&lt;br&gt;WAF_v2&lt;br&gt;Private IPs: 10.1.1.20" azureResourceId="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/applicationgateways/appgw-web" azureResourceType="Microsoft.Network/applicationGateways" tags="applicationgateway connectivity appgw-web" tooltip="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/applicationgateways/appgw-web">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Application_Gateways.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
+        <object id="connectivity-1" label="&lt;b&gt;lb-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Load balancer&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard&lt;br&gt;Rules: 2" azureResourceId="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/loadbalancers/lb-web" azureResourceType="Microsoft.Network/loadBalancers" tags="loadbalancer connectivity lb-web" tooltip="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/loadbalancers/lb-web">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Load_Balancers.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="216" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-2" label="&lt;b&gt;lb-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Load balancer&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard&lt;br&gt;Rules: 2" azureResourceId="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/loadbalancers/lb-web" azureResourceType="Microsoft.Network/loadBalancers" tags="loadbalancer connectivity lb-web" tooltip="/subscriptions/demo/resourcegroups/rg-app/providers/microsoft.network/loadbalancers/lb-web">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Load_Balancers.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
+        <object id="connectivity-2" label="&lt;b&gt;nat-spoke&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;NAT gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/natgateways/nat-spoke" azureResourceType="Microsoft.Network/natGateways" tags="nat connectivity nat-spoke" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/natgateways/nat-spoke">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/NAT.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="322" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-3" label="&lt;b&gt;nat-spoke&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;NAT gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Standard" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/natgateways/nat-spoke" azureResourceType="Microsoft.Network/natGateways" tags="nat connectivity nat-spoke" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/natgateways/nat-spoke">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/NAT.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
+        <object id="connectivity-3" label="&lt;b&gt;pip-lb-vmss&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.60&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-lb-vmss" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-lb-vmss" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-lb-vmss">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="428" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-4" label="&lt;b&gt;pip-appgw&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.70&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-appgw" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-appgw" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-appgw">
+        <object id="connectivity-4" label="&lt;b&gt;pip-nat&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.20&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-nat" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-nat" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-nat">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="534" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-5" label="&lt;b&gt;pip-lb-vmss&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.60&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-lb-vmss" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-lb-vmss" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-lb-vmss">
+        <object id="connectivity-5" label="&lt;b&gt;pip-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.10&lt;br&gt;Standard / IPv4&lt;br&gt;web.example.test" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-web" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-web" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-web">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="640" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-6" label="&lt;b&gt;pip-nat&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.20&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-nat" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-nat" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-nat">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
+        <object id="connectivity-6" label="&lt;b&gt;stdemo&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Storage account&lt;/i&gt;&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;Private Link target&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.storage/storageaccounts/stdemo" azureResourceType="Azure linked resource" tags="privatelinktarget connectivity stdemo" tooltip="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.storage/storageaccounts/stdemo">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Private_Link.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="746" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-7" label="&lt;b&gt;pip-web&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.10&lt;br&gt;Standard / IPv4&lt;br&gt;web.example.test" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-web" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-web" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-web">
+        <object id="connectivity-7" label="&lt;b&gt;pip-appgw&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Public IP address&lt;/i&gt;&lt;/font&gt;&lt;br&gt;203.0.113.70&lt;br&gt;Standard / IPv4" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-appgw" azureResourceType="Microsoft.Network/publicIPAddresses" tags="publicip connectivity pip-appgw" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-appgw">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Public_IP_Addresses.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
             <mxGeometry x="12" y="852" width="226" height="90" as="geometry" />
           </mxCell>
         </object>
-        <object id="connectivity-8" label="&lt;b&gt;stdemo&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Storage account&lt;/i&gt;&lt;/font&gt;&lt;br&gt;&lt;font color='#666666'&gt;Private Link target&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.storage/storageaccounts/stdemo" azureResourceType="Azure linked resource" tags="privatelinktarget connectivity stdemo" tooltip="/subscriptions/demo/resourcegroups/rg-data/providers/microsoft.storage/storageaccounts/stdemo">
-          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Private_Link.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#82b366;fontSize=10;overflow=hidden;" vertex="1" parent="connectivity-lane">
-            <mxGeometry x="12" y="958" width="226" height="90" as="geometry" />
-          </mxCell>
-        </object>
         <object id="external-1" label="&lt;b&gt;erg-connected&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;ExpressRoute gateway&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Scale units: 2" azureResourceId="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/expressroutegateways/erg-connected" azureResourceType="Microsoft.Network/expressRouteGateways" tags="expressroutegateway external erg-connected" tooltip="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/expressroutegateways/erg-connected">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/ExpressRoute_Circuits.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="1139" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="1033" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-2" label="&lt;b&gt;vnet-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Remote virtual network&lt;/i&gt;&lt;/font&gt;&lt;br&gt;Peering: Connected&lt;br&gt;&lt;font color='#0078d4'&gt;Open VNet page&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub" azureResourceType="Microsoft.Network/virtualNetworks" link="data:page/id,vnet-page-1" tags="remotevnet external vnet-hub" tooltip="Remote VNet: vnet-hub&#xA;State: Connected&#xA;/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/virtualnetworks/vnet-hub">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_Networks.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="1245" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="1139" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="external-3" label="&lt;b&gt;vhub-demo&lt;/b&gt;&lt;br&gt;&lt;font color='#777777'&gt;&lt;i&gt;Virtual Hub&lt;/i&gt;&lt;/font&gt;&lt;br&gt;10.200.0.0/23&lt;br&gt;ASN: 65515&lt;br&gt;Succeeded" azureResourceId="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/virtualhubs/vhub-demo" azureResourceType="Microsoft.Network/virtualHubs" tags="virtualhub external vhub-demo" tooltip="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/virtualhubs/vhub-demo">
           <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Virtual_WANs.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#ffffff;strokeColor=#9673a6;fontSize=10;overflow=hidden;" vertex="1" parent="external-lane">
-            <mxGeometry x="12" y="1351" width="256" height="90" as="geometry" />
+            <mxGeometry x="12" y="1245" width="256" height="90" as="geometry" />
           </mxCell>
         </object>
         <object id="edge-1" label="public IP" tags="connector attachment public-ip">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-7" target="resource-1">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-5" target="resource-1">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
@@ -418,12 +425,12 @@
           </mxCell>
         </object>
         <object id="edge-4" label="protects VMSS" tags="connector security protects-vmss">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=6 4;strokeColor=#b8860b;endArrow=none;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-security" source="security-4" target="resource-4">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=6 4;strokeColor=#b8860b;endArrow=none;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-security" source="security-4" target="resource-5">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
         <object id="edge-5" label="private link" tags="connector attachment private-link">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="resource-3" target="connectivity-8">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="resource-3" target="connectivity-6">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
@@ -438,62 +445,57 @@
           </mxCell>
         </object>
         <object id="edge-8" label="outbound NAT" tags="connector configuration outbound-nat">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=6 4;strokeColor=#6c8ebf;endArrow=none;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-configuration" source="connectivity-3" target="subnet-1">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=6 4;strokeColor=#6c8ebf;endArrow=none;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-configuration" source="connectivity-2" target="subnet-1">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
         <object id="edge-9" label="NAT public IP" tags="connector attachment nat-public-ip">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-6" target="connectivity-3">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-4" target="connectivity-2">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
         <object id="edge-10" label="frontend subnet" tags="connector attachment frontend-subnet">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-2" target="subnet-1">
-            <mxGeometry relative="1" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="edge-11" label="frontend IP" tags="connector attachment frontend-ip">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-5" target="connectivity-2">
-            <mxGeometry relative="1" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="edge-12" label="backend" tags="connector attachment backend">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=28;" edge="1" parent="layer-attachment" source="connectivity-2" target="resource-1">
-            <mxGeometry relative="1" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="edge-13" label="backend" tags="connector attachment backend">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=36;" edge="1" parent="layer-attachment" source="connectivity-2" target="resource-4">
-            <mxGeometry relative="1" as="geometry" />
-          </mxCell>
-        </object>
-        <object id="edge-14" label="gateway subnet" tags="connector attachment gateway-subnet">
           <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-1" target="subnet-1">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-15" label="frontend IP" tags="connector attachment frontend-ip">
-          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-4" target="connectivity-1">
+        <object id="edge-11" label="frontend IP" tags="connector attachment frontend-ip">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-3" target="connectivity-1">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-16" label="spoke-connection | Succeeded" azureResourceId="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/virtualhubs/vhub-demo/hubvirtualnetworkconnections/spoke-connection" azureResourceType="Microsoft.Network/virtualHubs/hubVirtualNetworkConnections" tags="connector hybrid spoke-connection-|-succeeded" tooltip="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/virtualhubs/vhub-demo/hubvirtualnetworkconnections/spoke-connection">
+        <object id="edge-12" label="backend" tags="connector attachment backend">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=28;" edge="1" parent="layer-attachment" source="connectivity-1" target="resource-1">
+            <mxGeometry relative="1" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="edge-13" label="backend" tags="connector attachment backend">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=36;" edge="1" parent="layer-attachment" source="connectivity-1" target="resource-5">
+            <mxGeometry relative="1" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="edge-14" label="frontend IP" tags="connector attachment frontend-ip">
+          <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#339966;exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-attachment" source="connectivity-7" target="resource-4">
+            <mxGeometry relative="1" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="edge-15" label="spoke-connection | Succeeded" azureResourceId="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/virtualhubs/vhub-demo/hubvirtualnetworkconnections/spoke-connection" azureResourceType="Microsoft.Network/virtualHubs/hubVirtualNetworkConnections" tags="connector hybrid spoke-connection-|-succeeded" tooltip="/subscriptions/demo/resourcegroups/rg-wan/providers/microsoft.network/virtualhubs/vhub-demo/hubvirtualnetworkconnections/spoke-connection">
           <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-hybrid" source="vnet" target="external-3">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-17" label="ExpressRoute gateway" tags="connector hybrid expressroute-gateway">
+        <object id="edge-16" label="ExpressRoute gateway" tags="connector hybrid expressroute-gateway">
           <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-hybrid" source="external-3" target="external-1">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
-        <object id="edge-18" label="to-hub" tags="connector peering to-hub">
+        <object id="edge-17" label="to-hub" tags="connector peering to-hub">
           <mxCell style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;dashed=1;dashPattern=8 4;strokeColor=#9673a6;strokeWidth=2;exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;jettySize=20;" edge="1" parent="layer-peering" source="vnet" target="external-2">
             <mxGeometry relative="1" as="geometry" />
           </mxCell>
         </object>
         <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;&lt;font color='#0078d4'&gt;Azure icon&lt;/font&gt; = Azure resource &amp;nbsp; | &amp;nbsp; Contained = VNet/subnet membership &amp;nbsp; | &amp;nbsp; Solid line = attachment/backend &amp;nbsp; | &amp;nbsp; Dashed line = security/configuration/peering &amp;nbsp; | &amp;nbsp; Purple line = hybrid connectivity &amp;nbsp; | &amp;nbsp; Click a remote VNet to open its page" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
-          <mxGeometry x="20" y="1552" width="1820" height="54" as="geometry" />
+          <mxGeometry x="20" y="1446" width="1820" height="54" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
@@ -1886,6 +1888,468 @@
         </mxCell>
         <mxCell id="route-1-3" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
           <mxGeometry x="920" y="272" width="300" height="48" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fwpolicy-detail-1" name="Firewall policy - fwpolicy-base">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1480" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" value="Resources" parent="0" />
+        <object id="overview-link" label="&amp;#8592; Network overview" link="data:page/id,network-overview" tooltip="Open the network overview page">
+          <mxCell style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;" vertex="1" parent="1">
+            <mxGeometry x="20" y="15" width="220" height="30" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="detail-title" label="&lt;b&gt;fwpolicy-base&lt;/b&gt;&lt;br&gt;&lt;font color='#666666'&gt;Firewall policy | rg-net | switzerlandnorth&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/firewallpolicies/fwpolicy-base" azureResourceType="Microsoft.Network/firewallPolicies" tags="firewallpolicy detail fwpolicy-base" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/firewallpolicies/fwpolicy-base">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Azure_Firewall_Policy.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#fffaf0;strokeColor=#d6b656;fontSize=10;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="270" y="15" width="720" height="62" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="policy-info" value="&lt;b&gt;Policy&lt;/b&gt;&lt;br&gt;Tier: Standard &amp;nbsp; | &amp;nbsp; Threat intelligence: Alert &amp;nbsp; | &amp;nbsp; DNS proxy: Enabled &amp;nbsp; | &amp;nbsp; State: Succeeded&lt;br&gt;DNS servers: Azure default &amp;nbsp; | &amp;nbsp; IDPS and TLS inspection: not available on the Standard tier&lt;br&gt;Directly used by firewalls: none&lt;br&gt;Inherited by policies: fwpolicy-hub&lt;br&gt;Parent policy: none" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="20" y="100" width="1440" height="125" as="geometry" />
+        </mxCell>
+        <object id="policy-link-1" label="Child policy: fwpolicy-hub" link="data:page/id,fwpolicy-detail-2" tooltip="Open firewall policy rules">
+          <mxCell style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;fontSize=10;" vertex="1" parent="1">
+            <mxGeometry x="20" y="237" width="340" height="30" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="evaluation-note" value="&lt;b&gt;Evaluation order&lt;/b&gt;&lt;br&gt;Rules are listed as evaluated: DNAT, then network, then application, each by group and collection priority.&lt;br&gt;Traffic matching no rule is denied, except to the platform FQDNs in Azure's built-in infrastructure rule collection. Neither is a rule in the policy." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="20" y="281" width="1440" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-heading" value="&lt;b&gt;Network rules&lt;/b&gt; (1)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontSize=12;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="365" width="1440" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-0" value="Priority" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="405" width="75" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-1" value="Collection" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="95" y="405" width="170" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-2" value="Name" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="265" y="405" width="210" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-3" value="Destination port" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="475" y="405" width="125" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-4" value="Protocol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="600" y="405" width="100" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-5" value="Source" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="700" y="405" width="290" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-6" value="Destination" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="990" y="405" width="360" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-7" value="Action" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="405" width="110" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-group-1" value="&lt;b&gt;rcg-platform&lt;/b&gt; &amp;nbsp; &lt;font color='#666666'&gt;Rule collection group, priority 100&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="439" width="1440" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-0" value="100" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="20" y="465" width="75" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-1" value="net-allow-platform" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="95" y="465" width="170" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-2" value="allow-ntp" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="265" y="465" width="210" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-3" value="123" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="475" y="465" width="125" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-4" value="UDP" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="600" y="465" width="100" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-5" value="10.0.0.0/8" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="700" y="465" width="290" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-6" value="Any" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="990" y="465" width="360" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-7" value="✓ ALLOW" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="465" width="110" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-heading" value="&lt;b&gt;Application rules&lt;/b&gt; (1)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontSize=12;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="539" width="1440" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-0" value="Priority" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="579" width="75" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-1" value="Collection" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="95" y="579" width="170" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-2" value="Name" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="265" y="579" width="210" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-3" value="Destination port" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="475" y="579" width="125" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-4" value="Protocol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="600" y="579" width="100" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-5" value="Source" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="700" y="579" width="290" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-6" value="Destination" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="990" y="579" width="360" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-7" value="Action" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="579" width="110" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-group-1" value="&lt;b&gt;rcg-platform&lt;/b&gt; &amp;nbsp; &lt;font color='#666666'&gt;Rule collection group, priority 100&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="613" width="1440" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-0" value="200" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="20" y="639" width="75" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-1" value="app-allow-platform" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="95" y="639" width="170" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-2" value="allow-windows-update&lt;br&gt;&lt;font color='#666666'&gt;TLS inspection: off&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="265" y="639" width="210" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-3" value="80, 443" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="475" y="639" width="125" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-4" value="Http, Https" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="600" y="639" width="100" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-5" value="10.0.0.0/8" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="700" y="639" width="290" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-6" value="WindowsUpdate" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="990" y="639" width="360" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-7" value="✓ ALLOW" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="639" width="110" height="54" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="fwpolicy-detail-2" name="Firewall policy - fwpolicy-hub">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1480" pageHeight="1175" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" value="Resources" parent="0" />
+        <object id="overview-link" label="&amp;#8592; Network overview" link="data:page/id,network-overview" tooltip="Open the network overview page">
+          <mxCell style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;" vertex="1" parent="1">
+            <mxGeometry x="20" y="15" width="220" height="30" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="detail-title" label="&lt;b&gt;fwpolicy-hub&lt;/b&gt;&lt;br&gt;&lt;font color='#666666'&gt;Firewall policy | rg-net | switzerlandnorth&lt;/font&gt;" azureResourceId="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/firewallpolicies/fwpolicy-hub" azureResourceType="Microsoft.Network/firewallPolicies" tags="firewallpolicy detail fwpolicy-hub" tooltip="/subscriptions/demo/resourcegroups/rg-net/providers/microsoft.network/firewallpolicies/fwpolicy-hub">
+          <mxCell style="shape=label;rounded=1;whiteSpace=wrap;html=1;image=img/lib/azure2/networking/Azure_Firewall_Policy.svg;imageWidth=34;imageHeight=34;imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;fillColor=#fffaf0;strokeColor=#d6b656;fontSize=10;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="270" y="15" width="720" height="62" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="policy-info" value="&lt;b&gt;Policy&lt;/b&gt;&lt;br&gt;Tier: Premium &amp;nbsp; | &amp;nbsp; Threat intelligence: Deny &amp;nbsp; | &amp;nbsp; DNS proxy: Enabled &amp;nbsp; | &amp;nbsp; State: Succeeded&lt;br&gt;DNS servers: 10.0.4.10 &amp;nbsp; | &amp;nbsp; IDPS: Alert and deny (2 signature override(s)) &amp;nbsp; | &amp;nbsp; TLS inspection: Enabled (CA: fw-inspection-ca)&lt;br&gt;Directly used by firewalls: fw-hub&lt;br&gt;Inherited by policies: none&lt;br&gt;Parent policy: fwpolicy-base" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="20" y="100" width="1440" height="125" as="geometry" />
+        </mxCell>
+        <object id="policy-link-1" label="Parent policy: fwpolicy-base" link="data:page/id,fwpolicy-detail-1" tooltip="Open firewall policy rules">
+          <mxCell style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;fontSize=10;" vertex="1" parent="1">
+            <mxGeometry x="20" y="237" width="340" height="30" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="evaluation-note" value="&lt;b&gt;Evaluation order&lt;/b&gt;&lt;br&gt;Rules are listed as evaluated: DNAT, then network, then application, each by group and collection priority.&lt;br&gt;Rules inherited from a parent policy come first. DNAT rules are not inherited.&lt;br&gt;Traffic matching no rule is denied, except to the platform FQDNs in Azure's built-in infrastructure rule collection. Neither is a rule in the policy." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="20" y="281" width="1440" height="72" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-heading" value="&lt;b&gt;DNAT rules&lt;/b&gt; (1)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontSize=12;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="365" width="1440" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-0" value="Priority" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="405" width="75" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-1" value="Collection" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="95" y="405" width="170" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-2" value="Name" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="265" y="405" width="210" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-3" value="Destination port" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="475" y="405" width="125" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-4" value="Protocol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="600" y="405" width="100" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-5" value="Source" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="700" y="405" width="290" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-6" value="Destination" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="990" y="405" width="360" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-header-7" value="Action" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="405" width="110" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-dnat-group-1" value="&lt;b&gt;rcg-inbound&lt;/b&gt; &amp;nbsp; &lt;font color='#666666'&gt;Rule collection group, priority 100&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="439" width="1440" height="26" as="geometry" />
+        </mxCell>
+        <object id="section-dnat-rule-0-0" label="100" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="20" y="465" width="75" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-dnat-rule-0-1" label="dnat-web" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="95" y="465" width="170" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-dnat-rule-0-2" label="publish-web" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="265" y="465" width="210" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-dnat-rule-0-3" label="443" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="475" y="465" width="125" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-dnat-rule-0-4" label="TCP" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="600" y="465" width="100" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-dnat-rule-0-5" label="Any" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="700" y="465" width="290" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-dnat-rule-0-6" label="203.0.113.30&lt;br&gt;&amp;#8594; 10.1.1.20:443" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="990" y="465" width="360" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-dnat-rule-0-7" label="DNAT" tooltip="Publishes the web tier through the application gateway.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+            <mxGeometry x="1350" y="465" width="110" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="section-network-heading" value="&lt;b&gt;Network rules&lt;/b&gt; (3, 1 inherited)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontSize=12;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="539" width="1440" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-0" value="Priority" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="579" width="75" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-1" value="Collection" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="95" y="579" width="170" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-2" value="Name" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="265" y="579" width="210" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-3" value="Destination port" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="475" y="579" width="125" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-4" value="Protocol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="600" y="579" width="100" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-5" value="Source" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="700" y="579" width="290" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-6" value="Destination" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="990" y="579" width="360" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-header-7" value="Action" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="579" width="110" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-group-1" value="&lt;b&gt;rcg-platform&lt;/b&gt; &amp;nbsp; &lt;font color='#666666'&gt;Rule collection group, priority 100 &amp;nbsp; | &amp;nbsp; &lt;b&gt;Inherited from fwpolicy-base&lt;/b&gt;, evaluated before this policy's own rules&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="613" width="1440" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-0" value="100" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="20" y="639" width="75" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-1" value="net-allow-platform" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="95" y="639" width="170" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-2" value="allow-ntp" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="265" y="639" width="210" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-3" value="123" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="475" y="639" width="125" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-4" value="UDP" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="600" y="639" width="100" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-5" value="10.0.0.0/8" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="700" y="639" width="290" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-6" value="Any" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="990" y="639" width="360" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-0-7" value="✓ ALLOW" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="639" width="110" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-group-2" value="&lt;b&gt;rcg-workloads&lt;/b&gt; &amp;nbsp; &lt;font color='#666666'&gt;Rule collection group, priority 200&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="693" width="1440" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-0" value="100" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="20" y="719" width="75" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-1" value="net-allow-shared" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="95" y="719" width="170" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-2" value="spoke-to-dns" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="265" y="719" width="210" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-3" value="53" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="475" y="719" width="125" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-4" value="UDP, TCP" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="600" y="719" width="100" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-5" value="10.1.0.0/16" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="700" y="719" width="290" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-6" value="10.0.4.10" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="990" y="719" width="360" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-1-7" value="✓ ALLOW" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="719" width="110" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-0" value="100" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="20" y="773" width="75" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-1" value="net-allow-shared" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="95" y="773" width="170" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-2" value="spoke-to-sql" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="265" y="773" width="210" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-3" value="1433" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="475" y="773" width="125" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-4" value="TCP" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="600" y="773" width="100" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-5" value="IP group: ipg-workloads" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="700" y="773" width="290" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-6" value="Sql.SwitzerlandNorth" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="990" y="773" width="360" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-network-rule-2-7" value="✓ ALLOW" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="773" width="110" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-heading" value="&lt;b&gt;Application rules&lt;/b&gt; (3, 1 inherited)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontSize=12;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="20" y="847" width="1440" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-0" value="Priority" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="887" width="75" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-1" value="Collection" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="95" y="887" width="170" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-2" value="Name" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="265" y="887" width="210" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-3" value="Destination port" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="475" y="887" width="125" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-4" value="Protocol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="600" y="887" width="100" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-5" value="Source" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="700" y="887" width="290" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-6" value="Destination" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="990" y="887" width="360" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-header-7" value="Action" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0078d4;strokeColor=#005a9e;fontColor=#ffffff;fontStyle=1;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="887" width="110" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-group-1" value="&lt;b&gt;rcg-platform&lt;/b&gt; &amp;nbsp; &lt;font color='#666666'&gt;Rule collection group, priority 100 &amp;nbsp; | &amp;nbsp; &lt;b&gt;Inherited from fwpolicy-base&lt;/b&gt;, evaluated before this policy's own rules&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="921" width="1440" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-0" value="200" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="20" y="947" width="75" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-1" value="app-allow-platform" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="95" y="947" width="170" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-2" value="allow-windows-update&lt;br&gt;&lt;font color='#666666'&gt;TLS inspection: off&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="265" y="947" width="210" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-3" value="80, 443" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="475" y="947" width="125" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-4" value="Http, Https" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="600" y="947" width="100" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-5" value="10.0.0.0/8" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="700" y="947" width="290" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-6" value="WindowsUpdate" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="990" y="947" width="360" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-0-7" value="✓ ALLOW" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="947" width="110" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-group-2" value="&lt;b&gt;rcg-workloads&lt;/b&gt; &amp;nbsp; &lt;font color='#666666'&gt;Rule collection group, priority 200&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f2f2f2;strokeColor=#b3b3b3;fontSize=10;align=left;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1001" width="1440" height="26" as="geometry" />
+        </mxCell>
+        <object id="section-application-rule-1-0" label="200" tooltip="Package feeds used by the build agents.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="20" y="1027" width="75" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-application-rule-1-1" label="app-allow-web" tooltip="Package feeds used by the build agents.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="95" y="1027" width="170" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-application-rule-1-2" label="allow-package-feeds&lt;br&gt;&lt;font color='#666666'&gt;TLS inspection: on&lt;/font&gt;" tooltip="Package feeds used by the build agents.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="265" y="1027" width="210" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-application-rule-1-3" label="443" tooltip="Package feeds used by the build agents.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="475" y="1027" width="125" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-application-rule-1-4" label="Https" tooltip="Package feeds used by the build agents.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="600" y="1027" width="100" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-application-rule-1-5" label="10.1.1.0/24" tooltip="Package feeds used by the build agents.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="700" y="1027" width="290" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-application-rule-1-6" label="registry.npmjs.org, pypi.org, files.pythonhosted.org, api.nuget.org, repo.maven.apache.org, github.com, objects.githubusercontent.com, raw.githubusercontent.com, ghcr.io (+11 more)" tooltip="registry.npmjs.org, pypi.org, files.pythonhosted.org, api.nuget.org, repo.maven.apache.org, github.com, objects.githubusercontent.com, raw.githubusercontent.com, ghcr.io, pkg-containers.githubusercontent.com, mcr.microsoft.com, packages.microsoft.com, dl.google.com, proxy.golang.org, sum.golang.org, crates.io, static.crates.io, index.docker.io, auth.docker.io, production.cloudflare.docker.com">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+            <mxGeometry x="990" y="1027" width="360" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="section-application-rule-1-7" label="✓ ALLOW" tooltip="Package feeds used by the build agents.">
+          <mxCell style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+            <mxGeometry x="1350" y="1027" width="110" height="54" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="section-application-rule-2-0" value="300" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="20" y="1081" width="75" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-2-1" value="app-deny-categories" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="95" y="1081" width="170" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-2-2" value="block-social-media&lt;br&gt;&lt;font color='#666666'&gt;TLS inspection: off&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="265" y="1081" width="210" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-2-3" value="80, 443" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="475" y="1081" width="125" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-2-4" value="Http, Https" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="600" y="1081" width="100" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-2-5" value="Any" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="700" y="1081" width="290" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-2-6" value="SocialNetworking, Gambling" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=9;align=left;spacingLeft=6;overflow=hidden;" vertex="1" parent="1">
+          <mxGeometry x="990" y="1081" width="360" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="section-application-rule-2-7" value="✕ DENY" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontColor=#b91c1c;fontStyle=1;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="1081" width="110" height="54" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
