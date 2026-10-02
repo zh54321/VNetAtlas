@@ -1039,6 +1039,62 @@ function Set-XmlAttribute {
     $Element.SetAttribute($Name, [string]$Value)
 }
 
+# Dark counterparts for the light colors written in styles, keyed by style
+# property. draw.io's automatic inversion leaves pure white text on black and
+# turns the table headers bright, so the dark theme is set explicitly instead.
+$script:DarkPageBackground = '#1e1f22'
+$script:DarkDefaultFontColor = '#dcdde0'
+$script:DarkThemeColors = @{
+    fillColor = @{
+        '#ffffff' = '#2b2d31'; '#fffdf5' = '#2d2b26'; '#f8f9fa' = '#26282c'; '#f2f2f2' = '#232427'
+        '#e6f2ff' = '#1d2d40'; '#f8fbff' = '#22272e'; '#fffaf0' = '#2e2a1f'; '#f2fbf5' = '#1f2b23'
+        '#f8f3fc' = '#2a2433'; '#f3e8ff' = '#2d2340'; '#fff2cc' = '#3a321c'; '#d5e8d4' = '#1f3324'
+        '#f8cecc' = '#3d2326'; '#0078d4' = '#1f4e79'
+    }
+    strokeColor = @{
+        '#0078d4' = '#4a9be0'; '#005a9e' = '#2f6aa0'; '#b3b3b3' = '#3e4148'; '#adb5bd' = '#4a4f57'
+        '#d6b656' = '#a88f3f'; '#82b366' = '#5e9a55'; '#9673a6' = '#9c84c4'; '#6c8ebf' = '#5f7fae'
+        '#b85450' = '#a8504c'; '#339966' = '#4caf7d'; '#b8860b' = '#c9a227'
+    }
+    fontColor = @{
+        '#ffffff' = '#f0f3f6'; '#0078d4' = '#6cb6ff'; '#107c10' = '#7fd18b'; '#b91c1c' = '#ff8f8f'
+        '#555555' = '#a0a4aa'; '#7a4f01' = '#e8c872'
+    }
+    labelBackgroundColor = @{ '#ffffff' = $script:DarkPageBackground }
+}
+
+function ConvertTo-AdaptiveStyle {
+    param([string]$Style)
+
+    # Colors inside HTML labels are left as written: draw.io ignores light-dark()
+    # there and inverts plain colors on its own, which reads well for the greys.
+    $hasFontColor = $false
+    $parts = foreach ($part in $Style.Split(';')) {
+        $separator = $part.IndexOf('=')
+        if ($separator -gt 0) {
+            $key = $part.Substring(0, $separator)
+            $value = $part.Substring($separator + 1)
+            if ($key -eq 'fontColor') { $hasFontColor = $true }
+            $darkColors = $script:DarkThemeColors[$key]
+            if ($darkColors -and $darkColors.ContainsKey($value)) {
+                $part = "$key=light-dark($value,$($darkColors[$value]))"
+            }
+        }
+        $part
+    }
+    $adaptiveStyle = $parts -join ';'
+    if (-not $hasFontColor) {
+        if ($adaptiveStyle -and -not $adaptiveStyle.EndsWith(';')) { $adaptiveStyle += ';' }
+        $adaptiveStyle += "fontColor=light-dark(#000000,$script:DarkDefaultFontColor);"
+    }
+    return $adaptiveStyle
+}
+
+function Set-MxPageTheme {
+    param([System.Xml.XmlElement]$Model)
+    Set-XmlAttribute $Model 'background' "light-dark(#ffffff,$script:DarkPageBackground)"
+}
+
 function Get-ConnectorLayerDefinition {
     # Order here is the order draw.io lists in its Layers panel.
     return @(
@@ -1143,7 +1199,7 @@ function Add-MxVertex {
     }
     $cell = $Document.CreateElement('mxCell')
     if(-not$wrapCell){Set-XmlAttribute $cell 'id' $Id;Set-XmlAttribute $cell 'value' $Value}
-    Set-XmlAttribute $cell 'style' $Style
+    Set-XmlAttribute $cell 'style' (ConvertTo-AdaptiveStyle $Style)
     Set-XmlAttribute $cell 'vertex' '1'
     Set-XmlAttribute $cell 'parent' $Parent
 
@@ -1199,7 +1255,7 @@ function Add-MxEdge {
     }
     $cell = $Document.CreateElement('mxCell')
     if(-not$wrapCell){Set-XmlAttribute $cell 'id' $Id;Set-XmlAttribute $cell 'value' $Value}
-    Set-XmlAttribute $cell 'style' $Style
+    Set-XmlAttribute $cell 'style' (ConvertTo-AdaptiveStyle $Style)
     Set-XmlAttribute $cell 'edge' '1'
     Set-XmlAttribute $cell 'parent' $Parent
     Set-XmlAttribute $cell 'source' $Source
@@ -2079,6 +2135,7 @@ function New-EnhancedDrawIoPage {
     foreach ($pair in ([ordered]@{dx='1422';dy='794';grid='1';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth='2100';pageHeight='1200';math='0';shadow='0'}).GetEnumerator()) {
         Set-XmlAttribute $model $pair.Key $pair.Value
     }
+    Set-MxPageTheme $model
     $null = $diagram.AppendChild($model)
     $root = $Document.CreateElement('root')
     $null = $model.AppendChild($root)
@@ -2959,7 +3016,7 @@ function Get-UnmappedResources {
 
 function New-UnmappedDrawIoPage {
     param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object[]]$Resources,[hashtable]$DetailPageIdByResourceId)
-    if($Resources.Count-eq0){return $false};$diagram=$Document.CreateElement('diagram');Set-XmlAttribute $diagram 'id' 'unmapped-resources';Set-XmlAttribute $diagram 'name' 'Unmapped Resources';$null=$MxFile.AppendChild($diagram);$model=$Document.CreateElement('mxGraphModel');foreach($pair in ([ordered]@{dx='1422';dy='794';grid='1';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth='1800';pageHeight='1200';math='0';shadow='0'}).GetEnumerator()){Set-XmlAttribute $model $pair.Key $pair.Value};$null=$diagram.AppendChild($model);$root=$Document.CreateElement('root');$null=$model.AppendChild($root);$null=Add-MxBaseCell $Document $root
+    if($Resources.Count-eq0){return $false};$diagram=$Document.CreateElement('diagram');Set-XmlAttribute $diagram 'id' 'unmapped-resources';Set-XmlAttribute $diagram 'name' 'Unmapped Resources';$null=$MxFile.AppendChild($diagram);$model=$Document.CreateElement('mxGraphModel');foreach($pair in ([ordered]@{dx='1422';dy='794';grid='1';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth='1800';pageHeight='1200';math='0';shadow='0'}).GetEnumerator()){Set-XmlAttribute $model $pair.Key $pair.Value};Set-MxPageTheme $model;$null=$diagram.AppendChild($model);$root=$Document.CreateElement('root');$null=$model.AppendChild($root);$null=Add-MxBaseCell $Document $root
     Add-MxVertex $Document $root 'title' '1' '<b>Unmapped Resources</b><br><font color=''#666666''>Resources that could not be associated with a VNet from Azure Resource Graph relationships.</font>' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;align=left;spacingLeft=12;' 20 20 1320 60
     $columns=4;$width=290;$height=76;$gapX=25;$gapY=20;$index=0;foreach($resource in $Resources){$x=20+(($index%$columns)*($width+$gapX));$y=110+([math]::Floor($index/$columns)*($height+$gapY));$friendlyType=Get-FriendlyResourceType $resource.Kind $resource.Type $resource.Id;$label="<b>$($resource.Name)</b><br><font color='#777777'><i>$friendlyType</i></font><br><font color='#666666'>$($resource.ResourceGroup) | $($resource.Location)</font>";$attributes=@{tooltip=$resource.Id;tags=(Join-ShapeTag @('unmapped',$resource.Kind,$resource.Name))};if($DetailPageIdByResourceId.ContainsKey($resource.Id)){$attributes.link="data:page/id,$($DetailPageIdByResourceId[$resource.Id])"};Add-MxVertex $Document $root "unmapped-$($index+1)" '1' $label (Get-AzureNodeStyle $resource.Kind '#fffdf5' '#d6b656') $x $y $width $height $resource.Id $resource.Type $attributes;$index++};$legendY=130+([math]::Ceiling($Resources.Count/[double]$columns)*($height+$gapY));Add-PageLegend $Document $root $legendY;Set-MxPageSize $model 1340 ($legendY+54);return $true
 }
@@ -2976,6 +3033,7 @@ function New-DrawIoPageRoot {
     $diagram=$Document.CreateElement('diagram');Set-XmlAttribute $diagram 'id' $Id;Set-XmlAttribute $diagram 'name' $Name;$null=$MxFile.AppendChild($diagram)
     $model=$Document.CreateElement('mxGraphModel')
     foreach($pair in ([ordered]@{dx='1422';dy='794';grid='1';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth=[string]$PageWidth;pageHeight=[string]$PageHeight;math='0';shadow='0'}).GetEnumerator()){Set-XmlAttribute $model $pair.Key $pair.Value}
+    Set-MxPageTheme $model
     $null=$diagram.AppendChild($model);$root=$Document.CreateElement('root');$null=$model.AppendChild($root)
     $baseCell=Add-MxBaseCell $Document $root
     return [pscustomobject]@{Diagram=$diagram;Model=$model;Root=$root;BaseCell=$baseCell}

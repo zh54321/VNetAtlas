@@ -205,6 +205,7 @@ policies that no firewall uses.
   show or hide them.
 - Subnets are collapsible, and **View > Tags** can filter shapes by kind, lane, name, or
   subnet.
+- The atlas follows draw.io's light and dark mode.
 
 Azure icons use draw.io's built-in `img/lib/azure2` library and render in the diagrams.net
 web and desktop editors.
