@@ -195,7 +195,7 @@ $ErrorActionPreference = 'Stop'
 
 # Date-based version of the exporter (VYYYYMMDD). Surfaced in the banner and
 # stamped into the mxfile so a generated diagram records which build produced it.
-$script:VNetAtlasVersion = 'V20260930'
+$script:VNetAtlasVersion = 'V20261002'
 
 # API version for every direct Azure Resource Manager read of firewall policy data.
 $script:FirewallPolicyApiVersion = '2024-05-01'
