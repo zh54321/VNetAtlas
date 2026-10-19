@@ -23,7 +23,12 @@ picture and click your way down to the details.
 **1. Network overview.** Every VNet, grouped by subscription, with its address space,
 region, and peerings. Click a VNet to open its page.
 
-**2. One page per VNet.** Subnets are drawn as containers holding what lives in them:
+**2. Network ranges.** The address ranges actually in use, often far smaller than the VNet
+address spaces suggest: public IPs and what they are attached to, connected ranges such as
+on-premises prefixes, VPN client pools and peered VNets, and every subnet grouped by VNet.
+Add `-ExportRangesPath` to get the same rows as CSV for a scan scope.
+
+**3. One page per VNet.** Subnets are drawn as containers holding what lives in them:
 VMs, NICs, scale sets, private endpoints, VNet-injected services such as Container Apps
 environments, and subnet-deployed services such as Application Gateway, Azure Firewall,
 virtual network gateways, and Azure Bastion. Around the VNet, three lanes show what it
@@ -42,7 +47,7 @@ over any shape to see its Azure resource ID.
 ![VNetAtlas Subnet View](assets/vnetatlas-overview.png)
 *VNet page showing subnet containment and connected Azure resources.*
 
-**3. NSG and route-table pages.** Click an NSG to see its rules laid out the way the portal
+**4. NSG and route-table pages.** Click an NSG to see its rules laid out the way the portal
 lists them: inbound and outbound, custom and default, with application security groups
 resolved and each rule's description shown on hover. Route tables get the same treatment.
 Click an Azure Firewall to open its firewall policy page, with every rule collection group,
@@ -51,7 +56,7 @@ collection, and rule.
 ![VNetAtlas NSG View](assets/vnetatlas-nsg.png)
 *NSG detail page showing inbound and outbound security rules.*
 
-**4. Unmapped Resources.** Anything VNetAtlas found but could not tie to a VNet through a
+**5. Unmapped Resources.** Anything VNetAtlas found but could not tie to a VNet through a
 relationship Azure actually reports, such as a public IP or an NSG that is not attached to
 anything. VNetAtlas lists these instead of guessing where they belong, and they are often
 worth a second look in a review.
@@ -97,6 +102,7 @@ live; `Input` regenerates a diagram from exported JSON; `Version` and `Help` pri
 | `-ExcludeSubscriptionId` | `string[]` | both | Exclude VNets in these subscriptions after applying `-SubscriptionId`. |
 | `-InputDataPath` | `string` | Input (**required**) | Build from exported JSON instead of querying Azure. |
 | `-OutputPath` | `string` | both | Target `.drawio` file. Defaults to `.\<yyyyMMdd_HHmm>_Azure-Network.drawio`. |
+| `-ExportRangesPath` | `string` | both | Also write the Network Ranges tables as CSV, one row per prefix or address. |
 | `-ResourcesPerRow` | `int` | both | Resources per subnet row, from 1 to 4. Default: `2`. |
 | `-SkipRuleDetailPages` | `switch` | both | Omit NSG, route-table, and firewall-policy detail pages. Firewall policy rules are still collected. |
 | `-SkipFirewallRules` | `switch` | both | Do not read firewall policy rules and omit the firewall-policy detail pages. |
@@ -143,6 +149,15 @@ Save the query results as JSON, so you can later rebuild the atlas with differen
     -OutputPath .\azure-network-offline.drawio
 ```
 
+Write the Network Ranges tables as CSV and list the subnet prefixes in use, one per line,
+as input for a scanner:
+
+```powershell
+.\Export-VNetAtlas.ps1 -ExportRangesPath .\ranges.csv
+
+Import-Csv .\ranges.csv | Where-Object Category -eq 'Subnet' | ForEach-Object Range
+```
+
 Relative output and data paths are resolved against PowerShell's current location. Use
 `-TenantId` to select another tenant; different tenants must be exported separately.
 
@@ -160,6 +175,8 @@ VNetAtlas currently queries and relates:
 - Azure Bastion hosts
 - Virtual Hubs, hub VNet connections, and associated ExpressRoute gateways and secured-hub
   firewalls
+- Virtual WAN VPN gateways, VPN sites, and point-to-site VPN gateways, and VPN client address
+  pools on virtual network gateways (Network Ranges page only)
 
 A resource appears on a VNet page only when Azure Resource Graph exposes a subnet, NIC,
 backend, peering, gateway connection, or Virtual WAN hub connection relationship. Other

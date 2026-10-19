@@ -5,8 +5,9 @@
 .DESCRIPTION
     VNetAtlas inventories Azure networking resources through Azure Resource Graph and
     writes one .drawio file containing a network overview page grouped by subscription,
-    one page per virtual network showing its subnets and the resources inside them,
-    detail pages for each network security group and route table, and an Unmapped
+    a Network Ranges page listing public IP addresses, connected ranges, and subnet
+    prefixes, one page per virtual network showing its subnets and the resources inside
+    them, detail pages for each network security group and route table, and an Unmapped
     Resources page for anything that could not be placed.
 
     A resource is placed on a VNet page only where Resource Graph exposes a defensible
@@ -74,6 +75,10 @@
     Target .drawio file. Relative paths resolve against the current location. Defaults to
     a timestamped name such as 20260901_1025_Azure-Network.drawio.
 
+.PARAMETER ExportRangesPath
+    Also write the Network Ranges tables to this path as CSV, one row per prefix or
+    address, for use as a scan scope. The rows follow the same scope filters as the page.
+
 .PARAMETER Quiet
     Suppress the banner and progress output. The summary line is still written to stdout.
 
@@ -110,6 +115,13 @@
 
     Save the normalized query results, then rebuild the same diagram offline without
     contacting Azure.
+
+.EXAMPLE
+    .\Export-VNetAtlas.ps1 -ExportRangesPath .\ranges.csv
+    Import-Csv .\ranges.csv | Where-Object Category -eq 'Subnet' | ForEach-Object Range
+
+    Also write the Network Ranges tables as CSV, then list the subnet prefixes in use,
+    one per line, as input for a scanner.
 
 .EXAMPLE
     $result = .\Export-VNetAtlas.ps1 -SubscriptionId '00000000-0000-0000-0000-000000000001' -Quiet
@@ -178,6 +190,10 @@ param(
     [Parameter(ParameterSetName = 'Azure')]
     [Parameter(ParameterSetName = 'Input')]
     [string]$OutputPath = ".\$(Get-Date -Format 'yyyyMMdd_HHmm')_Azure-Network.drawio",
+
+    [Parameter(ParameterSetName = 'Azure')]
+    [Parameter(ParameterSetName = 'Input')]
+    [string]$ExportRangesPath,
 
     [Parameter(ParameterSetName = 'Azure')]
     [Parameter(ParameterSetName = 'Input')]
@@ -304,6 +320,7 @@ SCOPE
 OUTPUT
   -OutputPath <file>             Target .drawio file. Default: .\<yyyyMMdd_HHmm>_Azure-Network.drawio
   -ExportDataPath <file>         Also save the normalized query results as JSON.
+  -ExportRangesPath <file>       Also save the Network Ranges tables as CSV.
   -ResourcesPerRow <1-4>         Resources per line inside a subnet. Default: 2.
   -SkipRuleDetailPages           Omit the NSG, route-table, and firewall-policy detail pages.
   -SkipFirewallRules             Do not read firewall policy rules or build their pages.
@@ -336,6 +353,53 @@ function Format-FileSize {
     if ($Bytes -ge 1MB) { return '{0:0.0} MB' -f ($Bytes / 1MB) }
     if ($Bytes -ge 1KB) { return '{0:0} KB' -f ($Bytes / 1KB) }
     return "$Bytes B"
+}
+
+function Format-InvariantNumber {
+    param([double]$Value, [string]$Format = 'N0')
+
+    # Diagram text must not depend on the current culture, or output would differ
+    # between machines.
+    return $Value.ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-AddressPrefixInfo {
+    param([AllowNull()][string]$Prefix)
+
+    # Accepts a CIDR prefix or a bare address. Start orders IPv4 ranges numerically;
+    # IPv6 is recognized but not sized, because no table reports IPv6 address counts.
+    $text = ([string]$Prefix).Trim()
+    $info = [pscustomobject]@{ Text=$text; IsValid=$false; IsIPv4=$false; IpVersion=''; Start=[long]0; Length=-1; Size=[long]0 }
+    if (-not $text) { return $info }
+    $parts = $text.Split('/')
+    if ($parts.Count -gt 2) { return $info }
+    $length = -1
+    if ($parts.Count -eq 2) {
+        $parsedLength = 0
+        if (-not [int]::TryParse($parts[1], [ref]$parsedLength) -or $parsedLength -lt 0) { return $info }
+        $length = $parsedLength
+    }
+    $address = $null
+    if ($parts[0] -match '^\d{1,3}(\.\d{1,3}){3}$') {
+        if (-not [System.Net.IPAddress]::TryParse($parts[0], [ref]$address)) { return $info }
+        if ($length -lt 0) { $length = 32 }
+        if ($length -gt 32) { return $info }
+        $bytes = $address.GetAddressBytes()
+        $info.Start = ([long]$bytes[0] -shl 24) + ([long]$bytes[1] -shl 16) + ([long]$bytes[2] -shl 8) + [long]$bytes[3]
+        $info.Size = [long]1 -shl (32 - $length)
+        $info.IsIPv4 = $true
+        $info.IpVersion = 'IPv4'
+    } elseif ($parts[0].Contains(':')) {
+        if (-not [System.Net.IPAddress]::TryParse($parts[0], [ref]$address)) { return $info }
+        if ($length -lt 0) { $length = 128 }
+        if ($length -gt 128) { return $info }
+        $info.IpVersion = 'IPv6'
+    } else {
+        return $info
+    }
+    $info.IsValid = $true
+    $info.Length = $length
+    return $info
 }
 
 function Resolve-LocalFilePath {
@@ -811,6 +875,8 @@ Resources
           allowForwardedTraffic=tobool(peering.properties.allowForwardedTraffic),
           allowGatewayTransit=tobool(peering.properties.allowGatewayTransit),
           useRemoteGateways=tobool(peering.properties.useRemoteGateways),
+          peeredAddressPrefixes=tostring(peering.properties.remoteAddressSpace.addressPrefixes),
+          remoteAddressPrefixes=tostring(peering.properties.remoteVirtualNetworkAddressSpace.addressPrefixes),
           subscriptionId, resourceGroup
 | order by vnetId asc, name asc
 '@
@@ -900,6 +966,8 @@ Resources
 | project id=tolower(id), name, resourceGroup, subscriptionId, location,
           gatewayType=tostring(properties.gatewayType), vpnType=tostring(properties.vpnType),
           sku=tostring(properties.sku.name), generation=tostring(properties.vpnGatewayGeneration),
+          vpnClientAddressPrefixes=tostring(properties.vpnClientConfiguration.vpnClientAddressPool.addressPrefixes),
+          vpnClientConnectionConfigurations=tostring(properties.vpnClientConfiguration.vngClientConnectionConfigurations),
           subnetId=tolower(tostring(ipConfig.properties.subnet.id)),
           privateIpAddress=tostring(ipConfig.properties.privateIPAddress),
           publicIpId=tolower(tostring(ipConfig.properties.publicIPAddress.id))
@@ -991,6 +1059,49 @@ Resources
           routingConfiguration=tostring(properties.routingConfiguration)
 | order by id asc
 '@
+        p2sVpnGateways = @'
+Resources
+| where type =~ 'microsoft.network/p2svpngateways'
+| project id=tolower(id), name, resourceGroup, subscriptionId, location,
+          virtualHubId=tolower(tostring(properties.virtualHub.id)),
+          connectionConfigurations=tostring(properties.p2SConnectionConfigurations),
+          scaleUnits=toint(properties.vpnGatewayScaleUnit),
+          provisioningState=tostring(properties.provisioningState)
+| order by id asc
+'@
+        vpnSites = @'
+Resources
+| where type =~ 'microsoft.network/vpnsites'
+| project id=tolower(id), name, resourceGroup, subscriptionId, location,
+          virtualWanId=tolower(tostring(properties.virtualWan.id)),
+          addressPrefixes=tostring(properties.addressSpace.addressPrefixes),
+          ipAddress=tostring(properties.ipAddress),
+          bgpAsn=tostring(properties.bgpProperties.asn),
+          bgpPeeringAddress=tostring(properties.bgpProperties.bgpPeeringAddress),
+          siteLinks=tostring(properties.vpnSiteLinks),
+          deviceVendor=tostring(properties.deviceProperties.deviceVendor),
+          provisioningState=tostring(properties.provisioningState)
+| order by id asc
+'@
+        # Only the site reference is read from each connection, so connection
+        # secrets are never part of the result.
+        vpnGateways = @'
+Resources
+| where type =~ 'microsoft.network/vpngateways'
+| extend gatewayConnections=iff(array_length(properties.connections) > 0,
+                                properties.connections, dynamic([{}]))
+| mv-expand connection=gatewayConnections limit 2000
+| project id=tolower(id), name, resourceGroup, subscriptionId, location,
+          virtualHubId=tolower(tostring(properties.virtualHub.id)),
+          ipConfigurations=tostring(properties.ipConfigurations),
+          bgpAsn=tostring(properties.bgpSettings.asn),
+          scaleUnits=toint(properties.vpnGatewayScaleUnit),
+          connectionName=tostring(connection.name),
+          remoteVpnSiteId=tolower(tostring(connection.properties.remoteVpnSite.id)),
+          connectionStatus=tostring(connection.properties.connectionStatus),
+          provisioningState=tostring(properties.provisioningState)
+| order by id asc, connectionName asc
+'@
     }
 
     $queryNames = @(
@@ -999,12 +1110,12 @@ Resources
         'vnetPeerings', 'loadBalancers', 'applicationGateways', 'firewalls', 'privateEndpoints',
         'routeTables', 'virtualNetworkGateways', 'bastionHosts', 'localNetworkGateways',
         'gatewayConnections', 'expressRouteCircuits', 'expressRouteGateways', 'virtualHubs',
-        'hubVirtualNetworkConnections'
+        'hubVirtualNetworkConnections', 'p2sVpnGateways', 'vpnSites', 'vpnGateways'
     )
     # Column identifying the expanded resource in each query that uses mv-expand.
     $expandParentPropertyByQuery = @{
         subnets = 'vnetId'; nics = 'nicId'; virtualMachines = 'id'; vnetPeerings = 'vnetId'
-        loadBalancers = 'id'; firewalls = 'id'; privateEndpoints = 'id'
+        loadBalancers = 'id'; firewalls = 'id'; privateEndpoints = 'id'; vpnGateways = 'id'
         virtualNetworkGateways = 'id'; bastionHosts = 'id'
     }
     $data = [ordered]@{}
@@ -1759,6 +1870,7 @@ function Get-FriendlyResourceType {
         Bastion='Azure Bastion';LocalNetworkGateway='Local network gateway';VPNConnection='Gateway connection'
         HubConnection='Virtual Hub connection';FirewallPolicy='Firewall policy';FirewallManagementInterface='Firewall management interface'
         RemoteVNet='Remote virtual network';GenericExternal='External endpoint'
+        VpnSite='VPN site';VpnGateway='Virtual WAN VPN gateway';P2SVpnGateway='Point-to-site VPN gateway'
     }
     if($Kind -eq 'PrivateLinkTarget'){
         $id=ConvertTo-ResourceId $ResourceId
@@ -2111,7 +2223,8 @@ function New-EnhancedDrawIoPage {
         [hashtable]$PageIdByVnetId,
         [hashtable]$DetailPageIdByResourceId,
         [System.Collections.Generic.HashSet[string]]$UsedResourceIds,
-        [ValidateRange(1,4)][int]$ResourcesPerRow
+        [ValidateRange(1,4)][int]$ResourcesPerRow,
+        [hashtable]$PlacedVnetIdsByResourceId
     )
 
     $vnetId = ConvertTo-ResourceId (Get-ObjectValue $Vnet 'id')
@@ -2995,6 +3108,14 @@ function New-EnhancedDrawIoPage {
     $legendY = $vnetY + $laneHeight + 25
     Add-PageLegend $Document $root $legendY 1820
     Set-MxPageSize $model ([math]::Max(1840, $externalX + 280)) ($legendY + 54)
+
+    # Lets the Network Ranges page name the VNet a resource belongs to from what this
+    # page actually drew, instead of re-deriving the relationships.
+    if ($null -ne $PlacedVnetIdsByResourceId) {
+        foreach ($node in $nodes.Values) {
+            if ($node.CellId) { Add-IndexValue $PlacedVnetIdsByResourceId $node.Id $vnetId }
+        }
+    }
 }
 
 function Get-UnmappedResources {
@@ -3048,7 +3169,8 @@ function New-NetworkOverviewPage {
         [hashtable]$PageIdByVnetId
     )
     $page=New-DrawIoPageRoot $Document $MxFile 'network-overview' 'Network Overview' 1800 1200;$root=$page.Root
-    Add-MxVertex $Document $root 'overview-title' '1' '<b>Azure Network Overview</b><br><font color=''#666666''>Subscriptions, virtual networks, address spaces, regions, and peerings. Click a VNet to open its detailed page.</font>' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;strokeWidth=2;fontSize=15;align=left;spacingLeft=12;' 20 20 1440 65
+    Add-MxVertex $Document $root 'overview-title' '1' '<b>Azure Network Overview</b><br><font color=''#666666''>Subscriptions, virtual networks, address spaces, regions, and peerings. Click a VNet to open its detailed page.</font>' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;strokeWidth=2;fontSize=15;align=left;spacingLeft=12;' 20 20 1190 65
+    Add-MxVertex $Document $root 'ranges-link' '1' 'Network ranges &#8594;' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;fontSize=13;' 1230 20 230 65 '' '' @{link='data:page/id,network-ranges';tooltip='Open the Network Ranges page: public IP addresses, connected ranges, and subnet prefixes'}
     $subscriptionNames=@{};foreach($subscription in Get-DataRows $Data 'subscriptions'){$subscriptionNames[(ConvertTo-ResourceId(Get-ObjectValue $subscription 'subscriptionId'))]=[string](Get-ObjectValue $subscription 'subscriptionName' '')}
     $groups=@($Vnets|Sort-Object subscriptionId,name|Group-Object{ConvertTo-ResourceId(Get-ObjectValue $_ 'subscriptionId')}|Sort-Object Name);$vnetCellById=@{};$vnetPositionById=@{};$currentY=110;$subscriptionIndex=0
     foreach($group in $groups){$subscriptionIndex++;$subscriptionId=[string]$group.Name;$subscriptionName=if($subscriptionNames.ContainsKey($subscriptionId)){$subscriptionNames[$subscriptionId]}else{''};$heading=if($subscriptionName){"<b>$subscriptionName</b><br><font color='#666666'>$subscriptionId</font>"}else{"<b>Subscription</b><br><font color='#666666'>$subscriptionId</font>"};$columns=4;$rows=[math]::Ceiling($group.Count/[double]$columns);$laneHeight=65+($rows*105);$laneId="subscription-$subscriptionIndex";Add-MxVertex $Document $root $laneId '1' $heading 'swimlane;html=1;rounded=1;startSize=48;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=11;align=left;' 20 $currentY 1440 $laneHeight '' 'Microsoft.Resources/subscriptions' @{azureSubscriptionId=$subscriptionId;tags=(Join-ShapeTag @('subscription',$subscriptionName));tooltip=$(if($subscriptionName){"$subscriptionName`n$subscriptionId"}else{$subscriptionId})}
@@ -3258,6 +3380,817 @@ function New-RouteTableDetailPage {
     if($routes.Count-eq0){Add-MxVertex $Document $root 'no-routes' '1' 'No custom routes.' 'rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=10;' 20 ($tableY+34) ($x-20) 45;Set-MxPageSize $page.Model 1220 ($tableY+79);return}
     $row=0;foreach($route in @($routes|Sort-Object name)){$properties=Get-ObjectValue $route 'properties' $route;$values=@([string](Get-ObjectValue $route 'name' ''),[string](Get-ObjectValue $properties 'addressPrefix' ''),[string](Get-ObjectValue $properties 'nextHopType' ''),[string](Get-ObjectValue $properties 'nextHopIpAddress' ''));$y=$tableY+34+($row*48);for($i=0;$i-lt$columns.Count;$i++){Add-DetailTableCell $Document $root "route-$row-$i" $values[$i] $columnX[$i] $y $columns[$i].Width 48};$row++}
     Set-MxPageSize $page.Model 1220 ($tableY+34+($row*48))
+}
+
+function Get-PrefixList {
+    param([AllowNull()][object]$Value)
+
+    # Resource Graph returns prefix arrays as JSON text and single prefixes as plain text.
+    $text = ([string]$Value).Trim()
+    if (-not $text -or $text -eq '[]') { return @() }
+    if ($text.StartsWith('[')) {
+        return @(ConvertFrom-JsonCollection $text | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+    }
+    return @($text)
+}
+
+function Get-RangePlacement {
+    param([hashtable]$PlacedVnetIdsByResourceId,[hashtable]$VnetById,[string[]]$ResourceId)
+
+    # Several IDs combine, for a resource reached through more than one drawn resource.
+    $placedIds = foreach ($id in @($ResourceId | Where-Object { $_ })) {
+        if ($PlacedVnetIdsByResourceId.ContainsKey($id)) { $PlacedVnetIdsByResourceId[$id] }
+    }
+    return ConvertTo-RangePlacement -VnetIds @($placedIds | ForEach-Object { [string]$_ }) -VnetById $VnetById
+}
+
+function ConvertTo-RangePlacement {
+    param([string[]]$VnetIds,[hashtable]$VnetById)
+
+    $vnetIds = @($VnetIds | Where-Object { $_ } | Sort-Object -Unique)
+    $vnetNames = @($vnetIds | ForEach-Object {
+        if ($VnetById.ContainsKey($_)) {
+            [string](Get-ObjectValue $VnetById[$_] 'name' (Get-ResourceNameFromId $_))
+        } else {
+            Get-ResourceNameFromId $_
+        }
+    } | Sort-Object -Unique)
+    return [pscustomobject]@{ VnetIds=$vnetIds; VnetNames=$vnetNames }
+}
+
+function Get-PublicAddressOwnerMap {
+    param([object]$Data,[object]$Index)
+
+    # Built from the same references the VNet pages draw, so a public IP is listed as
+    # attached to the resource its VNet page shows it attached to.
+    $owners = @{}
+    foreach ($nic in Get-DataRows $Data 'nics') {
+        $publicIpId = ConvertTo-ResourceId (Get-ObjectValue $nic 'publicIpId' '')
+        if (-not $publicIpId) { continue }
+        $nicId = ConvertTo-ResourceId (Get-ObjectValue $nic 'nicId' '')
+        $nicName = [string](Get-ObjectValue $nic 'nicName' (Get-ResourceNameFromId $nicId))
+        $vmRows = @($Index.VmRowsByNicId[$nicId] | Where-Object { $null -ne $_ })
+        if ($vmRows.Count -gt 0) {
+            $owner = "$(Get-FriendlyResourceType 'VM' '' ''): $(Get-ObjectValue $vmRows[0] 'name' '') (NIC $nicName)"
+        } else {
+            $owner = "$(Get-FriendlyResourceType 'NIC' '' ''): $nicName"
+        }
+        Add-IndexValue $owners $publicIpId $owner
+    }
+    foreach ($definition in @(
+        @{Relations=$Index.LoadBalancerRelationById;Kind='LoadBalancer';Property='PublicIpIds';Suffix=''},
+        @{Relations=$Index.ApplicationGatewayRelationById;Kind='ApplicationGateway';Property='PublicIpIds';Suffix=''},
+        @{Relations=$Index.FirewallRelationById;Kind='Firewall';Property='PublicIpIds';Suffix=''},
+        @{Relations=$Index.FirewallRelationById;Kind='Firewall';Property='ManagementPublicIpIds';Suffix=' (management)'},
+        @{Relations=$Index.GatewayRelationById;Kind='Gateway';Property='PublicIpIds';Suffix=''},
+        @{Relations=$Index.BastionRelationById;Kind='Bastion';Property='PublicIpIds';Suffix=''}
+    )) {
+        foreach ($ownerId in @($definition.Relations.Keys | Sort-Object)) {
+            $relation = $definition.Relations[$ownerId]
+            $ownerName = [string](Get-ObjectValue @($relation.Rows)[0] 'name' (Get-ResourceNameFromId $ownerId))
+            $owner = "$(Get-FriendlyResourceType $definition.Kind '' ''): $ownerName$($definition.Suffix)"
+            foreach ($publicIpId in @($relation.($definition.Property))) {
+                if ($publicIpId) { Add-IndexValue $owners ([string]$publicIpId) $owner }
+            }
+        }
+    }
+    foreach ($natGateway in Get-DataRows $Data 'natGateways') {
+        $natGatewayId = ConvertTo-ResourceId (Get-ObjectValue $natGateway 'id')
+        $owner = "$(Get-FriendlyResourceType 'NAT' '' ''): $(Get-ObjectValue $natGateway 'name' (Get-ResourceNameFromId $natGatewayId))"
+        foreach ($property in @('publicIpIds', 'publicIpIdsV6', 'publicIpPrefixIds', 'publicIpPrefixIdsV6')) {
+            foreach ($referencedId in @(Get-IdsFromJson (Get-ObjectValue $natGateway $property ''))) {
+                if ($referencedId) { Add-IndexValue $owners ([string]$referencedId) $owner }
+            }
+        }
+    }
+    return $owners
+}
+
+function New-PublicAddressRow {
+    param(
+        [string]$Category,
+        [string]$Range,
+        [string]$IpVersion,
+        [string]$Name,
+        [string]$Detail,
+        [string]$Fqdn,
+        [string[]]$Owners,
+        [object]$Placement,
+        [object]$Source,
+        [string]$ResourceId
+    )
+
+    $info = Get-AddressPrefixInfo $Range
+    if (-not $IpVersion) { $IpVersion = $info.IpVersion }
+    # Unallocated addresses sort last, after IPv4 and IPv6.
+    $sortGroup = 2
+    if ($info.IsIPv4) { $sortGroup = 0 } elseif ($info.IsValid) { $sortGroup = 1 }
+    return [pscustomobject]@{
+        Category=$Category; Range=$Range; IpVersion=$IpVersion; Name=$Name; Detail=$Detail; Fqdn=$Fqdn
+        Owners=@($Owners | Where-Object { $_ }); VnetIds=$Placement.VnetIds; VnetNames=$Placement.VnetNames
+        SubscriptionId=[string](Get-ObjectValue $Source 'subscriptionId' '')
+        ResourceGroup=[string](Get-ObjectValue $Source 'resourceGroup' '')
+        Location=[string](Get-ObjectValue $Source 'location' '')
+        ResourceId=$ResourceId; SortGroup=$sortGroup; SortStart=$info.Start
+    }
+}
+
+function New-ConnectedRangeRow {
+    param(
+        [string]$Category,
+        [string]$Type,
+        [string]$Name,
+        [string[]]$Prefixes,
+        [string[]]$Detail,
+        [object]$Placement,
+        [object]$Source,
+        [string]$ResourceId,
+        [string]$EmptyText = 'None'
+    )
+
+    return [pscustomobject]@{
+        Category=$Category; Type=$Type; Name=$Name; Prefixes=@($Prefixes | Where-Object { $_ })
+        Detail=(@($Detail | Where-Object { $_ }) -join ' | '); EmptyText=$EmptyText
+        VnetIds=$Placement.VnetIds; VnetNames=$Placement.VnetNames
+        SubscriptionId=[string](Get-ObjectValue $Source 'subscriptionId' '')
+        ResourceGroup=[string](Get-ObjectValue $Source 'resourceGroup' '')
+        Location=[string](Get-ObjectValue $Source 'location' ''); ResourceId=$ResourceId
+    }
+}
+
+function Select-UniqueValue {
+    param([object[]]$Values)
+
+    # Keeps the first occurrence of each non-empty value, in its original order.
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($value in $Values) {
+        $text = ([string]$value).Trim()
+        if ($text -and $seen.Add($text)) { $text }
+    }
+}
+
+function Get-ClientPoolPrefix {
+    param([object[]]$Configurations)
+
+    # Classic gateway user-group configurations and Virtual WAN point-to-site
+    # configurations share this shape.
+    foreach ($configuration in $Configurations) {
+        $pool = Get-ObjectValue (Get-ObjectValue $configuration 'properties' $null) 'vpnClientAddressPool' $null
+        foreach ($prefix in @(Get-ObjectValue $pool 'addressPrefixes' @())) { [string]$prefix }
+    }
+}
+
+function New-SubnetRangeRow {
+    param([object]$Subnet)
+
+    $prefixes = @(Get-PrefixList (Get-ObjectValue $Subnet 'addressPrefixes' ''))
+    if ($prefixes.Count -eq 0) { $prefixes = @(Get-PrefixList (Get-ObjectValue $Subnet 'addressPrefix' '')) }
+    $prefixInfos = @($prefixes | ForEach-Object { Get-AddressPrefixInfo $_ })
+    $usable = [long]0
+    $hasIPv4 = $false
+    $hasIPv6 = $false
+    foreach ($info in $prefixInfos) {
+        if ($info.IsIPv4) {
+            $hasIPv4 = $true
+            # Azure reserves the first four addresses and the last one in every subnet.
+            if ($info.Size -gt 5) { $usable += $info.Size - 5 }
+        } elseif ($info.IsValid) {
+            $hasIPv6 = $true
+        }
+    }
+    $usableText = ''
+    if ($hasIPv4) { $usableText = Format-InvariantNumber $usable }
+    if ($hasIPv6) {
+        if ($usableText) { $usableText += ' + IPv6' } else { $usableText = 'IPv6' }
+    }
+
+    # Each IP configuration holds one address. Delegated and service-linked subnets
+    # are run by the service, which does not report its addresses here.
+    $delegation = Get-JsonPropertyList (Get-ObjectValue $Subnet 'delegations' '') 'properties.serviceName'
+    $ipConfigurations = Get-ObjectValue $Subnet 'ipConfigurations' $null
+    $serviceLinkCount = @(ConvertFrom-JsonCollection (Get-ObjectValue $Subnet 'serviceAssociationLinks' '')).Count
+    if ($null -eq $ipConfigurations) {
+        $occupancyState = 'NotReported'
+        $occupancyText = 'Not reported'
+    } else {
+        $configurationCount = @(ConvertFrom-JsonCollection $ipConfigurations).Count
+        if ($configurationCount -gt 0) {
+            $occupancyState = 'InUse'
+            $occupancyText = if ($configurationCount -eq 1) { '1 IP config' } else { "$configurationCount IP configs" }
+        } elseif ($delegation -or $serviceLinkCount -gt 0) {
+            $occupancyState = 'ServiceManaged'
+            $occupancyText = 'Service-managed'
+        } else {
+            $occupancyState = 'Empty'
+            $occupancyText = 'Empty'
+        }
+    }
+
+    $nsgId = ConvertTo-ResourceId (Get-ObjectValue $Subnet 'nsgId' '')
+    $routeTableId = ConvertTo-ResourceId (Get-ObjectValue $Subnet 'routeTableId' '')
+    $sortGroup = 1
+    $sortStart = [long]0
+    if ($prefixInfos.Count -gt 0 -and $prefixInfos[0].IsIPv4) {
+        $sortGroup = 0
+        $sortStart = $prefixInfos[0].Start
+    }
+    return [pscustomobject]@{
+        Name=[string](Get-ObjectValue $Subnet 'name' '(unnamed subnet)')
+        SubnetId=(ConvertTo-ResourceId (Get-ObjectValue $Subnet 'id'))
+        Prefixes=$prefixInfos; Usable=$usableText; OccupancyState=$occupancyState; Occupancy=$occupancyText
+        NsgId=$nsgId; NsgName=$(if ($nsgId) { Get-ResourceNameFromId $nsgId } else { '' })
+        RouteTableId=$routeTableId; RouteTableName=$(if ($routeTableId) { Get-ResourceNameFromId $routeTableId } else { '' })
+        Delegation=$delegation
+        SubscriptionId=[string](Get-ObjectValue $Subnet 'subscriptionId' '')
+        ResourceGroup=[string](Get-ObjectValue $Subnet 'resourceGroup' '')
+        Location=[string](Get-ObjectValue $Subnet 'location' '')
+        SortGroup=$sortGroup; SortStart=$sortStart
+    }
+}
+
+function Get-NetworkRangeData {
+    param(
+        [object]$Data,
+        [object]$Index,
+        [object[]]$Vnets,
+        [hashtable]$PlacedVnetIdsByResourceId,
+        [bool]$IsScoped
+    )
+
+    # A filtered run keeps only resources drawn on a selected VNet page, the same
+    # reasoning that suppresses the Unmapped Resources page.
+    $ownersById = Get-PublicAddressOwnerMap -Data $Data -Index $Index
+    $pagedVnetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($vnet in $Vnets) { $null = $pagedVnetIds.Add((ConvertTo-ResourceId (Get-ObjectValue $vnet 'id'))) }
+    $kindByType = @{
+        'microsoft.network/networkinterfaces'='NIC'; 'microsoft.network/loadbalancers'='LoadBalancer'
+        'microsoft.network/applicationgateways'='ApplicationGateway'; 'microsoft.network/azurefirewalls'='Firewall'
+        'microsoft.network/virtualnetworkgateways'='Gateway'; 'microsoft.network/bastionhosts'='Bastion'
+        'microsoft.network/natgateways'='NAT'
+    }
+
+    $publicAddresses = [System.Collections.Generic.List[object]]::new()
+    foreach ($publicIp in Get-DataRows $Data 'publicIps') {
+        $id = ConvertTo-ResourceId (Get-ObjectValue $publicIp 'id')
+        if (-not $id) { continue }
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $id
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $owners = @($ownersById[$id] | Where-Object { $_ } | Sort-Object -Unique)
+        if ($owners.Count -eq 0) {
+            # Owner types the exporter does not query are still named from the public
+            # IP's own reference.
+            $ownerId = ConvertTo-ResourceId (Get-ObjectValue $publicIp 'natGatewayId' '')
+            $configurationId = ConvertTo-ResourceId (Get-ObjectValue $publicIp 'ipConfigurationId' '')
+            if ($configurationId) { $ownerId = ConvertTo-ResourceId (Get-SubnetOccupantId $configurationId) }
+            if ($ownerId) {
+                $ownerType = (Get-ResourceTypeFromId $ownerId).ToLowerInvariant()
+                $ownerKind = if ($kindByType.ContainsKey($ownerType)) { [string]$kindByType[$ownerType] } else { '' }
+                $owners = @("$(Get-FriendlyResourceType $ownerKind $ownerType $ownerId): $(Get-ResourceNameFromId $ownerId)")
+            }
+        }
+        $ipVersion = [string](Get-ObjectValue $publicIp 'ipVersion' '')
+        $detail = @((Get-ObjectValue $publicIp 'sku' ''), $ipVersion, (Get-ObjectValue $publicIp 'allocationMethod' '')) | Where-Object { $_ }
+        $publicAddresses.Add((New-PublicAddressRow -Category 'PublicIp' -Range ([string](Get-ObjectValue $publicIp 'ipAddress' '')) `
+            -IpVersion $ipVersion -Name ([string](Get-ObjectValue $publicIp 'name' (Get-ResourceNameFromId $id))) `
+            -Detail ($detail -join ' / ') -Fqdn ([string](Get-ObjectValue $publicIp 'fqdn' '')) -Owners $owners `
+            -Placement $placement -Source $publicIp -ResourceId $id))
+    }
+    foreach ($prefix in Get-DataRows $Data 'publicIpPrefixes') {
+        $id = ConvertTo-ResourceId (Get-ObjectValue $prefix 'id')
+        if (-not $id) { continue }
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $id
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $ipVersion = [string](Get-ObjectValue $prefix 'ipVersion' '')
+        $prefixLength = [string](Get-ObjectValue $prefix 'prefixLength' '')
+        $prefixLabel = if ($prefixLength) { "Prefix /$prefixLength" } else { 'Prefix' }
+        $detail = @((Get-ObjectValue $prefix 'sku' ''), $ipVersion, $prefixLabel) | Where-Object { $_ }
+        $publicAddresses.Add((New-PublicAddressRow -Category 'PublicIpPrefix' -Range ([string](Get-ObjectValue $prefix 'ipPrefix' '')) `
+            -IpVersion $ipVersion -Name ([string](Get-ObjectValue $prefix 'name' (Get-ResourceNameFromId $id))) `
+            -Detail ($detail -join ' / ') -Fqdn '' -Owners @($ownersById[$id] | Where-Object { $_ } | Sort-Object -Unique) `
+            -Placement $placement -Source $prefix -ResourceId $id))
+    }
+    # Secured-hub firewalls get Azure-managed public addresses that are not public IP resources.
+    foreach ($firewallId in @($Index.FirewallRelationById.Keys | Sort-Object)) {
+        $firewall = @($Index.FirewallRelationById[$firewallId].Rows)[0]
+        $hubAddresses = @(ConvertFrom-JsonCollection (Get-ObjectValue $firewall 'hubPublicIpAddresses' '') |
+            ForEach-Object { [string](Get-ObjectValue $_ 'address' '') } | Where-Object { $_ })
+        if ($hubAddresses.Count -eq 0) { continue }
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $firewallId
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $name = [string](Get-ObjectValue $firewall 'name' (Get-ResourceNameFromId $firewallId))
+        $owner = "$(Get-FriendlyResourceType 'Firewall' '' ''): $name"
+        $hubId = ConvertTo-ResourceId (Get-ObjectValue $firewall 'virtualHubId' '')
+        if ($hubId) { $owner += " (secured hub $(Get-ResourceNameFromId $hubId))" }
+        $detail = @((Get-ObjectValue $firewall 'sku' ''), (Get-ObjectValue $firewall 'tier' '')) | Where-Object { $_ }
+        foreach ($address in $hubAddresses) {
+            $publicAddresses.Add((New-PublicAddressRow -Category 'FirewallHubPublicIp' -Range $address -IpVersion '' -Name $name `
+                -Detail ($detail -join ' / ') -Fqdn '' -Owners @($owner) -Placement $placement -Source $firewall -ResourceId $firewallId))
+        }
+    }
+    # Virtual WAN VPN gateways and point-to-site gateways are not drawn on VNet pages.
+    # They belong to a hub, so they reach the VNets whose pages drew that hub.
+    $vpnGatewayGroups = @(Get-DataRows $Data 'vpnGateways' | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)
+    $hubIdsBySiteId = @{}
+    foreach ($group in $vpnGatewayGroups) {
+        $gatewayId = [string]$group.Name
+        if (-not $gatewayId) { continue }
+        $gateway = $group.Group[0]
+        $hubId = ConvertTo-ResourceId (Get-ObjectValue $gateway 'virtualHubId' '')
+        foreach ($row in $group.Group) {
+            $siteId = ConvertTo-ResourceId (Get-ObjectValue $row 'remoteVpnSiteId' '')
+            if ($siteId -and $hubId) { Add-IndexValue $hubIdsBySiteId $siteId $hubId }
+        }
+        $addresses = @(Select-UniqueValue @(ConvertFrom-JsonCollection (Get-ObjectValue $gateway 'ipConfigurations' '') |
+            ForEach-Object { Get-ObjectValue $_ 'publicIpAddress' '' }))
+        if ($addresses.Count -eq 0) { continue }
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $hubId
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $name = [string](Get-ObjectValue $gateway 'name' (Get-ResourceNameFromId $gatewayId))
+        $owner = "$(Get-FriendlyResourceType 'VpnGateway' '' ''): $name"
+        if ($hubId) { $owner += " (hub $(Get-ResourceNameFromId $hubId))" }
+        $scaleUnits = [string](Get-ObjectValue $gateway 'scaleUnits' '')
+        $detail = if ($scaleUnits) { "Scale units $scaleUnits" } else { '' }
+        foreach ($address in $addresses) {
+            $publicAddresses.Add((New-PublicAddressRow -Category 'VpnGatewayPublicIp' -Range $address -IpVersion '' -Name $name `
+                -Detail $detail -Fqdn '' -Owners @($owner) -Placement $placement -Source $gateway -ResourceId $gatewayId))
+        }
+    }
+
+    $connectedRanges = [System.Collections.Generic.List[object]]::new()
+    foreach ($gateway in Get-DataRows $Data 'localNetworkGateways') {
+        $id = ConvertTo-ResourceId (Get-ObjectValue $gateway 'id')
+        if (-not $id) { continue }
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $id
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $gatewayIp = [string](Get-ObjectValue $gateway 'gatewayIpAddress' '')
+        $bgpAsn = [string](Get-ObjectValue $gateway 'bgpAsn' '')
+        $bgpPeer = [string](Get-ObjectValue $gateway 'bgpPeeringAddress' '')
+        $connectedRanges.Add((New-ConnectedRangeRow -Category 'LocalNetworkGateway' -Type (Get-FriendlyResourceType 'LocalNetworkGateway' '' '') `
+            -Name ([string](Get-ObjectValue $gateway 'name' (Get-ResourceNameFromId $id))) `
+            -Prefixes @(Get-PrefixList (Get-ObjectValue $gateway 'addressPrefixes' '')) `
+            -Detail @($(if ($gatewayIp) { "Gateway IP $gatewayIp" }), $(if ($bgpAsn) { "BGP ASN $bgpAsn" }), $(if ($bgpPeer) { "BGP peer $bgpPeer" })) `
+            -Placement $placement -Source $gateway -ResourceId $id))
+    }
+    foreach ($site in Get-DataRows $Data 'vpnSites') {
+        $id = ConvertTo-ResourceId (Get-ObjectValue $site 'id')
+        if (-not $id) { continue }
+        $hubIds = @($hubIdsBySiteId[$id] | Where-Object { $_ } | Sort-Object -Unique)
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $hubIds
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $linkProperties = @(ConvertFrom-JsonCollection (Get-ObjectValue $site 'siteLinks' '') | ForEach-Object { Get-ObjectValue $_ 'properties' $_ })
+        $endpoints = @(Select-UniqueValue (@(Get-ObjectValue $site 'ipAddress' '') + @($linkProperties | ForEach-Object {
+            $endpoint = [string](Get-ObjectValue $_ 'ipAddress' '')
+            if (-not $endpoint) { $endpoint = [string](Get-ObjectValue $_ 'fqdn' '') }
+            $endpoint
+        })))
+        $asns = @(Select-UniqueValue (@(Get-ObjectValue $site 'bgpAsn' '') + @($linkProperties | ForEach-Object {
+            Get-ObjectValue (Get-ObjectValue $_ 'bgpProperties' $null) 'asn' ''
+        })) | Where-Object { $_ -ne '0' })
+        $hubNames = @($hubIds | ForEach-Object { Get-ResourceNameFromId $_ })
+        $connectedRanges.Add((New-ConnectedRangeRow -Category 'VpnSite' -Type (Get-FriendlyResourceType 'VpnSite' '' '') `
+            -Name ([string](Get-ObjectValue $site 'name' (Get-ResourceNameFromId $id))) `
+            -Prefixes @(Get-PrefixList (Get-ObjectValue $site 'addressPrefixes' '')) `
+            -Detail @($(if ($endpoints.Count -gt 0) { "Link IP $($endpoints -join ', ')" }), $(if ($asns.Count -gt 0) { "BGP ASN $($asns -join ', ')" }),
+                $(if ($hubNames.Count -gt 0) { "Hub $($hubNames -join ', ')" } else { 'Not connected to a hub' })) `
+            -Placement $placement -Source $site -ResourceId $id))
+    }
+    foreach ($gatewayId in @($Index.GatewayRelationById.Keys | Sort-Object)) {
+        $relation = $Index.GatewayRelationById[$gatewayId]
+        $gateway = @($relation.Rows)[0]
+        $configurations = @(ConvertFrom-JsonCollection (Get-ObjectValue $gateway 'vpnClientConnectionConfigurations' ''))
+        $prefixes = @(Select-UniqueValue (@(Get-PrefixList (Get-ObjectValue $gateway 'vpnClientAddressPrefixes' '')) + @(Get-ClientPoolPrefix $configurations)))
+        if ($prefixes.Count -eq 0) { continue }
+        # A gateway is also drawn as the remote end of VNet-to-VNet connections, so
+        # its own VNet comes from its subnet rather than from where it was drawn.
+        $gatewayVnetIds = @($relation.SubnetIds | ForEach-Object {
+            if ($Index.SubnetById.ContainsKey($_)) { ConvertTo-ResourceId (Get-ObjectValue $Index.SubnetById[$_] 'vnetId') }
+        } | Where-Object { $pagedVnetIds.Contains($_) })
+        $placement = ConvertTo-RangePlacement -VnetIds $gatewayVnetIds -VnetById $Index.VnetById
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $configurationNames = @(Select-UniqueValue @($configurations | ForEach-Object { Get-ObjectValue $_ 'name' '' }))
+        $connectedRanges.Add((New-ConnectedRangeRow -Category 'VpnClientPool' -Type 'VPN client pool' `
+            -Name ([string](Get-ObjectValue $gateway 'name' (Get-ResourceNameFromId $gatewayId))) -Prefixes $prefixes `
+            -Detail @((Get-FriendlyResourceType 'Gateway' '' ''), $(if ($configurationNames.Count -gt 0) { "Configurations $($configurationNames -join ', ')" })) `
+            -Placement $placement -Source $gateway -ResourceId $gatewayId))
+    }
+    foreach ($gateway in Get-DataRows $Data 'p2sVpnGateways') {
+        $id = ConvertTo-ResourceId (Get-ObjectValue $gateway 'id')
+        if (-not $id) { continue }
+        $configurations = @(ConvertFrom-JsonCollection (Get-ObjectValue $gateway 'connectionConfigurations' ''))
+        $prefixes = @(Select-UniqueValue @(Get-ClientPoolPrefix $configurations))
+        if ($prefixes.Count -eq 0) { continue }
+        $hubId = ConvertTo-ResourceId (Get-ObjectValue $gateway 'virtualHubId' '')
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $hubId
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $configurationNames = @(Select-UniqueValue @($configurations | ForEach-Object { Get-ObjectValue $_ 'name' '' }))
+        $connectedRanges.Add((New-ConnectedRangeRow -Category 'VpnClientPool' -Type 'VPN client pool' `
+            -Name ([string](Get-ObjectValue $gateway 'name' (Get-ResourceNameFromId $id))) -Prefixes $prefixes `
+            -Detail @((Get-FriendlyResourceType 'P2SVpnGateway' '' ''), $(if ($hubId) { "Hub $(Get-ResourceNameFromId $hubId)" }),
+                $(if ($configurationNames.Count -gt 0) { "Configurations $($configurationNames -join ', ')" })) `
+            -Placement $placement -Source $gateway -ResourceId $id))
+    }
+    # Peered VNets without a page here, outside the export or outside the selected
+    # VNets, are still reachable from the VNets that are listed.
+    $peeringsByRemoteId = @{}
+    foreach ($peering in Get-DataRows $Data 'vnetPeerings') {
+        $localId = ConvertTo-ResourceId (Get-ObjectValue $peering 'vnetId' '')
+        $remoteId = ConvertTo-ResourceId (Get-ObjectValue $peering 'remoteVnetId' '')
+        if (-not $remoteId -or -not $pagedVnetIds.Contains($localId) -or $pagedVnetIds.Contains($remoteId)) { continue }
+        Add-IndexValue $peeringsByRemoteId $remoteId $peering
+    }
+    foreach ($remoteId in @($peeringsByRemoteId.Keys | Sort-Object)) {
+        $peerings = @($peeringsByRemoteId[$remoteId])
+        # The peered space is what is reachable; subnet peering can make it smaller
+        # than the remote VNet's own address space.
+        $prefixes = @(Select-UniqueValue @(foreach ($peering in $peerings) {
+            $peered = @(Get-PrefixList (Get-ObjectValue $peering 'peeredAddressPrefixes' ''))
+            if ($peered.Count -eq 0) { $peered = @(Get-PrefixList (Get-ObjectValue $peering 'remoteAddressPrefixes' '')) }
+            $peered
+        }))
+        $remoteVnet = if ($Index.VnetById.ContainsKey($remoteId)) { $Index.VnetById[$remoteId] } else { $null }
+        if ($prefixes.Count -eq 0 -and $null -ne $remoteVnet) { $prefixes = @(Get-PrefixList (Get-ObjectValue $remoteVnet 'addressPrefixes' '')) }
+        $source = $remoteVnet
+        if ($null -eq $source -and $remoteId -match '^/subscriptions/([^/]+)/resourcegroups/([^/]+)/') {
+            $source = [pscustomobject]@{ subscriptionId=$Matches[1]; resourceGroup=$Matches[2]; location='' }
+        }
+        $states = @(Select-UniqueValue @($peerings | ForEach-Object { Get-ObjectValue $_ 'state' '' }))
+        $scopeNote = if ($null -ne $remoteVnet) { 'Outside the selected VNets' } else { 'Not in this export' }
+        $remoteSubscriptionId = [string](Get-ObjectValue $source 'subscriptionId' '')
+        $placement = ConvertTo-RangePlacement -VnetIds @($peerings | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'vnetId' '') }) `
+            -VnetById $Index.VnetById
+        $connectedRanges.Add((New-ConnectedRangeRow -Category 'PeeredVnet' -Type (Get-FriendlyResourceType 'RemoteVNet' '' '') `
+            -Name ([string](Get-ObjectValue $remoteVnet 'name' (Get-ResourceNameFromId $remoteId))) -Prefixes $prefixes `
+            -Detail @($(if ($states.Count -gt 0) { "Peering $($states -join ', ')" }), $scopeNote,
+                $(if ($remoteSubscriptionId) { "Subscription $remoteSubscriptionId" })) `
+            -Placement $placement -Source $source -ResourceId $remoteId -EmptyText 'Not reported'))
+    }
+    foreach ($hub in Get-DataRows $Data 'virtualHubs') {
+        $id = ConvertTo-ResourceId (Get-ObjectValue $hub 'id')
+        if (-not $id) { continue }
+        $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $id
+        if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
+        $routerAsn = [string](Get-ObjectValue $hub 'virtualRouterAsn' '')
+        $routerIps = ConvertTo-DisplayList (Get-ObjectValue $hub 'virtualRouterIps' '')
+        $connectedRanges.Add((New-ConnectedRangeRow -Category 'VirtualHub' -Type (Get-FriendlyResourceType 'VirtualHub' '' '') `
+            -Name ([string](Get-ObjectValue $hub 'name' (Get-ResourceNameFromId $id))) `
+            -Prefixes @(Get-PrefixList (Get-ObjectValue $hub 'addressPrefix' '')) `
+            -Detail @($(if ($routerAsn) { "ASN $routerAsn" }), $(if ($routerIps) { "Router IPs $routerIps" })) `
+            -Placement $placement -Source $hub -ResourceId $id))
+    }
+
+    $vnetGroups = [System.Collections.Generic.List[object]]::new()
+    foreach ($vnet in $Vnets) {
+        $vnetId = ConvertTo-ResourceId (Get-ObjectValue $vnet 'id')
+        $subscriptionId = [string](Get-ObjectValue $vnet 'subscriptionId' '')
+        $subscriptionName = ''
+        $normalizedSubscriptionId = ConvertTo-ResourceId $subscriptionId
+        if ($Index.SubscriptionById.ContainsKey($normalizedSubscriptionId)) {
+            $subscriptionName = [string](Get-ObjectValue $Index.SubscriptionById[$normalizedSubscriptionId] 'subscriptionName' '')
+        }
+        $spaceInfos = @(Get-PrefixList (Get-ObjectValue $vnet 'addressPrefixes' '') | ForEach-Object { Get-AddressPrefixInfo $_ })
+        $spaceSize = [long]0
+        foreach ($info in $spaceInfos) { if ($info.IsIPv4) { $spaceSize += $info.Size } }
+        $subnetRows = @($Index.SubnetsByVnetId[$vnetId] | Where-Object { $null -ne $_ } | ForEach-Object { New-SubnetRangeRow $_ })
+        $coveredSize = [long]0
+        foreach ($subnetRow in $subnetRows) {
+            foreach ($info in $subnetRow.Prefixes) { if ($info.IsIPv4) { $coveredSize += $info.Size } }
+        }
+        $coverage = if ($subnetRows.Count -eq 1) { '1 subnet' } else { "$($subnetRows.Count) subnets" }
+        if ($spaceSize -gt 0) {
+            $percent = 100.0 * $coveredSize / $spaceSize
+            $percentText = if ($percent -gt 0 -and $percent -lt 0.1) { '<0.1%' } else { "$(Format-InvariantNumber $percent '0.0')%" }
+            $verb = if ($subnetRows.Count -eq 1) { 'covers' } else { 'cover' }
+            $coverage = "$coverage $verb $(Format-InvariantNumber $coveredSize) of $(Format-InvariantNumber $spaceSize) IPv4 addresses ($percentText)"
+        }
+        $vnetGroups.Add([pscustomobject]@{
+            VnetId=$vnetId; Name=[string](Get-ObjectValue $vnet 'name' '(unnamed VNet)')
+            SubscriptionId=$subscriptionId; SubscriptionName=$subscriptionName
+            ResourceGroup=[string](Get-ObjectValue $vnet 'resourceGroup' ''); Location=[string](Get-ObjectValue $vnet 'location' '')
+            AddressSpace=$spaceInfos; Coverage=$coverage
+            Subnets=@($subnetRows | Sort-Object SortGroup, SortStart, Name, SubnetId)
+        })
+    }
+
+    return [pscustomobject]@{
+        IsScoped=$IsScoped
+        PublicAddresses=@($publicAddresses | Sort-Object SortGroup, SortStart, Range, Name, ResourceId)
+        ConnectedRanges=@($connectedRanges | Sort-Object Type, Name, ResourceId)
+        VnetGroups=@($vnetGroups)
+    }
+}
+
+function Get-RangeCellStyle {
+    param([string]$Kind = 'Default')
+
+    # An empty style lets Add-DetailTableCell apply its default body style.
+    $base = 'rounded=0;whiteSpace=wrap;html=1;fontSize=9;align=left;spacingLeft=6;overflow=hidden;'
+    switch ($Kind) {
+        'Muted'   { return $base + 'fillColor=#ffffff;strokeColor=#b3b3b3;fontColor=#555555;' }
+        'Link'    { return $base + 'fillColor=#ffffff;strokeColor=#b3b3b3;fontColor=#0078d4;' }
+        'Empty'   { return $base + 'fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;' }
+        'Warning' { return $base + 'fillColor=#fff2cc;strokeColor=#d6b656;' }
+        'Service' { return $base + 'fillColor=#f2f2f2;strokeColor=#b3b3b3;fontColor=#555555;' }
+        'Group'   { return 'rounded=0;whiteSpace=wrap;html=1;fontSize=10;align=left;spacingLeft=8;overflow=hidden;fillColor=#f8fbff;strokeColor=#6c8ebf;' }
+        default   { return '' }
+    }
+}
+
+function New-RangeCell {
+    param([AllowNull()][string]$Value,[string]$Kind = 'Default',[hashtable]$Attributes)
+    return @{ Value=[string]$Value; Style=(Get-RangeCellStyle $Kind); Attributes=$Attributes }
+}
+
+function New-RangeVnetCell {
+    param([object]$Row,[hashtable]$PageIdByVnetId)
+
+    $names = @($Row.VnetNames)
+    $ids = @($Row.VnetIds)
+    if ($names.Count -eq 0) { return New-RangeCell 'Not on a VNet page' 'Muted' }
+    if ($ids.Count -eq 1 -and $PageIdByVnetId.ContainsKey([string]$ids[0])) {
+        return New-RangeCell ([string]$names[0]) 'Link' @{ link="data:page/id,$($PageIdByVnetId[[string]$ids[0]])"; tooltip='Open the VNet page' }
+    }
+    return New-RangeCell ($names -join '<br>')
+}
+
+function New-RangeResourceCell {
+    param([string]$ResourceId,[string]$Name,[hashtable]$DetailPageIdByResourceId)
+
+    if (-not $ResourceId) { return New-RangeCell 'None' 'Muted' }
+    if ($DetailPageIdByResourceId.ContainsKey($ResourceId)) {
+        return New-RangeCell $Name 'Link' @{ link="data:page/id,$($DetailPageIdByResourceId[$ResourceId])"; tooltip=$ResourceId }
+    }
+    return New-RangeCell $Name 'Default' @{ tooltip=$ResourceId }
+}
+
+function Add-RangeTableHeading {
+    param(
+        [System.Xml.XmlDocument]$Document,
+        [System.Xml.XmlElement]$Root,
+        [string]$IdPrefix,
+        [string]$Title,
+        [int]$Count,
+        [string]$Note,
+        [object[]]$Columns,
+        [double]$Y
+    )
+
+    $tableWidth = 0
+    foreach ($column in $Columns) { $tableWidth += $column.Width }
+    $label = "<b>$Title</b> ($Count)"
+    if ($Note) { $label += " &nbsp; <font color='#666666'>$Note</font>" }
+    Add-MxVertex $Document $Root "$IdPrefix-heading" '1' $label 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontSize=12;align=left;spacingLeft=8;' 20 $Y $tableWidth 34
+    $headerY = $Y + 40
+    $x = 20
+    for ($i = 0; $i -lt $Columns.Count; $i++) {
+        $attributes = @{}
+        if ($Columns[$i].ContainsKey('Tooltip')) { $attributes.tooltip = $Columns[$i].Tooltip }
+        Add-DetailTableCell $Document $Root "$IdPrefix-header-$i" $Columns[$i].Name $x $headerY $Columns[$i].Width 34 -Header -Attributes $attributes
+        $x += $Columns[$i].Width
+    }
+    return $headerY + 34
+}
+
+function Add-RangeTableRow {
+    param(
+        [System.Xml.XmlDocument]$Document,
+        [System.Xml.XmlElement]$Root,
+        [string]$IdPrefix,
+        [object[]]$Columns,
+        [object[]]$Cells,
+        [double]$Y
+    )
+
+    $lineCount = 1
+    foreach ($cell in $Cells) {
+        $lines = ([regex]::Matches([string]$cell.Value, '<br>')).Count + 1
+        if ($lines -gt $lineCount) { $lineCount = $lines }
+    }
+    $height = [math]::Max(30, 12 + (14 * $lineCount))
+    $x = 20
+    for ($i = 0; $i -lt $Columns.Count; $i++) {
+        $cell = $Cells[$i]
+        Add-DetailTableCell $Document $Root "$IdPrefix-$i" $cell.Value $x $Y $Columns[$i].Width $height `
+            -StyleOverride $cell.Style -Attributes $cell.Attributes
+        $x += $Columns[$i].Width
+    }
+    return $Y + $height
+}
+
+function New-NetworkRangesPage {
+    param(
+        [System.Xml.XmlDocument]$Document,
+        [object]$Page,
+        [object]$Ranges,
+        [hashtable]$PageIdByVnetId,
+        [hashtable]$DetailPageIdByResourceId
+    )
+
+    # Short tables come first so they stay visible above a long subnet list.
+    $root = $Page.Root
+    Add-DetailNavigation $Document $root
+    $description = 'Public IP addresses, connected on-premises and Virtual WAN ranges, and subnet prefixes. ' +
+                   'Subnet prefixes are the ranges in use; a VNet address space is only reserved.'
+    if ($Ranges.IsScoped) { $description += ' Filtered to the selected VNets; unattached public IPs are omitted.' }
+    Add-MxVertex $Document $root 'ranges-title' '1' "<b>Network Ranges</b><br><font color='#666666'>$description</font>" `
+        'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;strokeWidth=2;fontSize=13;align=left;spacingLeft=12;' `
+        260 15 1200 62
+    $fullWidth = @(@{Width=1440})
+
+    $publicColumns = @(
+        @{Name='Address';Width=160},@{Name='Name';Width=220},@{Name='SKU / version / allocation';Width=190},
+        @{Name='FQDN';Width=280},@{Name='Attached to';Width=350},@{Name='VNet';Width=240}
+    )
+    $y = Add-RangeTableHeading -Document $Document -Root $root -IdPrefix 'public' -Title 'Public IP addresses' `
+        -Count $Ranges.PublicAddresses.Count -Note ('Azure public IP resources plus the addresses of secured-hub firewalls and Virtual WAN VPN gateways. ' +
+            'PaaS public endpoints are not listed.') `
+        -Columns $publicColumns -Y 100
+    if ($Ranges.PublicAddresses.Count -eq 0) {
+        $y = Add-RangeTableRow -Document $Document -Root $root -IdPrefix 'public-empty' -Columns $fullWidth -Cells @((New-RangeCell 'None found.' 'Muted')) -Y $y
+    }
+    $rowNumber = 0
+    foreach ($address in $Ranges.PublicAddresses) {
+        $addressCell = if ($address.Range) { New-RangeCell $address.Range } else { New-RangeCell 'not allocated' 'Muted' }
+        $ownerCell = if (@($address.Owners).Count -gt 0) { New-RangeCell (@($address.Owners) -join '<br>') } else { New-RangeCell 'Not attached' 'Warning' }
+        $cells = @(
+            $addressCell,
+            (New-RangeCell $address.Name 'Default' @{ tooltip=$address.ResourceId }),
+            (New-RangeCell $address.Detail),
+            (New-RangeCell $address.Fqdn),
+            $ownerCell,
+            (New-RangeVnetCell $address $PageIdByVnetId)
+        )
+        $y = Add-RangeTableRow -Document $Document -Root $root -IdPrefix "public-row-$rowNumber" -Columns $publicColumns -Cells $cells -Y $y
+        $rowNumber++
+    }
+
+    $connectedColumns = @(
+        @{Name='Range';Width=260},@{Name='Type';Width=200},@{Name='Name';Width=240},
+        @{Name='Detail';Width=440},@{Name='VNet';Width=300}
+    )
+    $y = Add-RangeTableHeading -Document $Document -Root $root -IdPrefix 'connected' -Title 'Connected ranges' `
+        -Count $Ranges.ConnectedRanges.Count -Note ('Static on-premises prefixes, VPN client pools, Virtual WAN hubs, and peered VNets without a page here. ' +
+            'Ranges learned over BGP, such as through ExpressRoute, are not visible.') `
+        -Columns $connectedColumns -Y ($y + 30)
+    if ($Ranges.ConnectedRanges.Count -eq 0) {
+        $y = Add-RangeTableRow -Document $Document -Root $root -IdPrefix 'connected-empty' -Columns $fullWidth -Cells @((New-RangeCell 'None found.' 'Muted')) -Y $y
+    }
+    $rowNumber = 0
+    foreach ($range in $Ranges.ConnectedRanges) {
+        $prefixes = @($range.Prefixes)
+        $rangeCell = if ($prefixes.Count -gt 0) { New-RangeCell ($prefixes -join '<br>') } else { New-RangeCell $range.EmptyText 'Muted' }
+        $cells = @(
+            $rangeCell,
+            (New-RangeCell $range.Type),
+            (New-RangeCell $range.Name 'Default' @{ tooltip=$range.ResourceId }),
+            (New-RangeCell $range.Detail),
+            (New-RangeVnetCell $range $PageIdByVnetId)
+        )
+        $y = Add-RangeTableRow -Document $Document -Root $root -IdPrefix "connected-row-$rowNumber" -Columns $connectedColumns -Cells $cells -Y $y
+        $rowNumber++
+    }
+
+    $subnetColumns = @(
+        @{Name='Subnet';Width=260},@{Name='Prefix';Width=220},@{Name='Usable';Width=110},
+        @{Name='Occupancy';Width=190;Tooltip=("IP configurations Azure reports on the subnet, one address each. Scaled services such as " +
+            "Application Gateway, Azure Firewall, and VPN gateways can use more addresses than they report. " +
+            "Service-managed: a delegated or service-linked subnet whose addresses Azure does not report here.")},
+        @{Name='NSG';Width=220},@{Name='Route table';Width=220},@{Name='Delegation';Width=220}
+    )
+    $subnetCount = 0
+    foreach ($group in $Ranges.VnetGroups) { $subnetCount += @($group.Subnets).Count }
+    $y = Add-RangeTableHeading -Document $Document -Root $root -IdPrefix 'subnets' -Title 'Subnets' -Count $subnetCount `
+        -Note 'Grouped by VNet and ordered by address. Usable excludes the 5 addresses Azure reserves in each subnet.' `
+        -Columns $subnetColumns -Y ($y + 30)
+    $groupNumber = 0
+    foreach ($group in $Ranges.VnetGroups) {
+        $groupNumber++
+        $space = @($group.AddressSpace | ForEach-Object { $_.Text }) -join ', '
+        $subscription = if ($group.SubscriptionName) { $group.SubscriptionName } else { $group.SubscriptionId }
+        $groupLabel = "<b>$($group.Name)</b> &nbsp; $space &nbsp; | &nbsp; $subscription &nbsp; | &nbsp; $($group.Coverage)"
+        $groupAttributes = @{ tooltip=$group.VnetId }
+        if ($PageIdByVnetId.ContainsKey($group.VnetId)) { $groupAttributes.link = "data:page/id,$($PageIdByVnetId[$group.VnetId])" }
+        $y = Add-RangeTableRow -Document $Document -Root $root -IdPrefix "subnets-group-$groupNumber" -Columns $fullWidth `
+            -Cells @((New-RangeCell $groupLabel 'Group' $groupAttributes)) -Y $y
+        if (@($group.Subnets).Count -eq 0) {
+            $y = Add-RangeTableRow -Document $Document -Root $root -IdPrefix "subnets-group-$groupNumber-empty" -Columns $fullWidth `
+                -Cells @((New-RangeCell 'No subnets.' 'Muted')) -Y $y
+        }
+        $rowNumber = 0
+        foreach ($subnet in $group.Subnets) {
+            $occupancyKind = switch ($subnet.OccupancyState) {
+                'Empty' { 'Empty' }
+                'ServiceManaged' { 'Service' }
+                'NotReported' { 'Muted' }
+                default { 'Default' }
+            }
+            $delegationCell = if ($subnet.Delegation) { New-RangeCell $subnet.Delegation } else { New-RangeCell 'None' 'Muted' }
+            $cells = @(
+                (New-RangeCell $subnet.Name 'Default' @{ tooltip=$subnet.SubnetId }),
+                (New-RangeCell (@($subnet.Prefixes | ForEach-Object { $_.Text }) -join '<br>')),
+                (New-RangeCell $subnet.Usable),
+                (New-RangeCell $subnet.Occupancy $occupancyKind),
+                (New-RangeResourceCell $subnet.NsgId $subnet.NsgName $DetailPageIdByResourceId),
+                (New-RangeResourceCell $subnet.RouteTableId $subnet.RouteTableName $DetailPageIdByResourceId),
+                $delegationCell
+            )
+            $y = Add-RangeTableRow -Document $Document -Root $root -IdPrefix "subnets-group-$groupNumber-row-$rowNumber" `
+                -Columns $subnetColumns -Cells $cells -Y $y
+            $rowNumber++
+        }
+        $y += 10
+    }
+    Set-MxPageSize $Page.Model 1460 $y
+}
+
+function New-NetworkRangeCsvRow {
+    param(
+        [string]$Category,
+        [string]$Range = '',
+        [string]$IpVersion = '',
+        [string]$Name = '',
+        [string]$Vnet = '',
+        [string]$Subnet = '',
+        [string]$Usable = '',
+        [string]$Occupancy = '',
+        [string]$AttachedTo = '',
+        [string]$Fqdn = '',
+        [string]$Detail = '',
+        [string]$SubscriptionId = '',
+        [string]$ResourceGroup = '',
+        [string]$Location = '',
+        [string]$ResourceId = ''
+    )
+
+    return [pscustomobject]@{
+        Category=$Category; Range=$Range; IpVersion=$IpVersion; Name=$Name; Vnet=$Vnet; Subnet=$Subnet
+        Usable=$Usable; Occupancy=$Occupancy; AttachedTo=$AttachedTo; Fqdn=$Fqdn; Detail=$Detail
+        SubscriptionId=$SubscriptionId; ResourceGroup=$ResourceGroup; Location=$Location; ResourceId=$ResourceId
+    }
+}
+
+function ConvertTo-NetworkRangeCsvRow {
+    param([object]$Ranges)
+
+    # One row per prefix or address, so the Range column filters straight into a
+    # scanner target list.
+    foreach ($address in $Ranges.PublicAddresses) {
+        $attachedTo = if (@($address.Owners).Count -gt 0) { @($address.Owners) -join '; ' } else { 'Not attached' }
+        New-NetworkRangeCsvRow -Category $address.Category -Range $address.Range -IpVersion $address.IpVersion `
+            -Name $address.Name -Vnet (@($address.VnetNames) -join '; ') -AttachedTo $attachedTo -Fqdn $address.Fqdn `
+            -Detail $address.Detail -SubscriptionId $address.SubscriptionId -ResourceGroup $address.ResourceGroup `
+            -Location $address.Location -ResourceId $address.ResourceId
+    }
+    foreach ($range in $Ranges.ConnectedRanges) {
+        $prefixes = @($range.Prefixes)
+        if ($prefixes.Count -eq 0) { $prefixes = @('') }
+        foreach ($prefix in $prefixes) {
+            $info = Get-AddressPrefixInfo $prefix
+            New-NetworkRangeCsvRow -Category $range.Category -Range $prefix -IpVersion $info.IpVersion -Name $range.Name `
+                -Vnet (@($range.VnetNames) -join '; ') -Detail $range.Detail -SubscriptionId $range.SubscriptionId `
+                -ResourceGroup $range.ResourceGroup -Location $range.Location -ResourceId $range.ResourceId
+        }
+    }
+    foreach ($group in $Ranges.VnetGroups) {
+        foreach ($info in $group.AddressSpace) {
+            New-NetworkRangeCsvRow -Category 'VnetAddressSpace' -Range $info.Text -IpVersion $info.IpVersion -Name $group.Name `
+                -Vnet $group.Name -Detail $group.Coverage -SubscriptionId $group.SubscriptionId -ResourceGroup $group.ResourceGroup `
+                -Location $group.Location -ResourceId $group.VnetId
+        }
+        foreach ($subnet in $group.Subnets) {
+            $nsgName = if ($subnet.NsgName) { $subnet.NsgName } else { 'None' }
+            $routeTableName = if ($subnet.RouteTableName) { $subnet.RouteTableName } else { 'None' }
+            $delegation = if ($subnet.Delegation) { $subnet.Delegation } else { 'None' }
+            $detail = "NSG: $nsgName; Route table: $routeTableName; Delegation: $delegation"
+            $prefixInfos = @($subnet.Prefixes)
+            if ($prefixInfos.Count -eq 0) { $prefixInfos = @(Get-AddressPrefixInfo '') }
+            foreach ($info in $prefixInfos) {
+                $usable = ''
+                if ($info.IsIPv4) {
+                    $usableCount = $info.Size - 5
+                    if ($usableCount -lt 0) { $usableCount = 0 }
+                    $usable = $usableCount.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+                }
+                New-NetworkRangeCsvRow -Category 'Subnet' -Range $info.Text -IpVersion $info.IpVersion -Name $subnet.Name `
+                    -Vnet $group.Name -Subnet $subnet.Name -Usable $usable -Occupancy $subnet.Occupancy -Detail $detail `
+                    -SubscriptionId $subnet.SubscriptionId -ResourceGroup $subnet.ResourceGroup -Location $subnet.Location `
+                    -ResourceId $subnet.SubnetId
+            }
+        }
+    }
+}
+
+function Export-NetworkRangeCsv {
+    param([object]$Ranges,[string]$Path)
+
+    $rows = @(ConvertTo-NetworkRangeCsvRow -Ranges $Ranges)
+    if ($rows.Count -gt 0) {
+        $lines = @($rows | ConvertTo-Csv -NoTypeInformation)
+    } else {
+        # ConvertTo-Csv writes nothing for no input; a header keeps the file importable.
+        $lines = @((@((New-NetworkRangeCsvRow -Category '').PSObject.Properties.Name) | ForEach-Object { '"' + $_ + '"' }) -join ',')
+    }
+    [System.IO.File]::WriteAllLines($Path, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
+    return $rows.Count
 }
 
 function Get-ReachableFirewallPolicy {
@@ -3724,12 +4657,16 @@ function Export-DrawIoDocument {
     }
     $plannedDetailPages = 0
     if ($IncludeRuleDetailPages) { $plannedDetailPages = $nsgs.Count + $routeTables.Count + $firewallPolicies.Count }
-    $plannedPages = 1 + $sortedVnets.Count + $plannedDetailPages
+    $plannedPages = 2 + $sortedVnets.Count + $plannedDetailPages
     $builtPages = 0
     Write-StatusProgress 'Building diagram pages' 'Network overview' $builtPages $plannedPages
     # The overview follows the scope filters so it never lists VNets without a page.
     New-NetworkOverviewPage -Document $document -MxFile $mxFile -Data $Data -Vnets $sortedVnets -PageIdByVnetId $pageIdByVnetId
     $builtPages++
+    # Created now to keep it second in the file, filled once the VNet pages have
+    # recorded which resources they drew.
+    $rangesPage = New-DrawIoPageRoot $document $mxFile 'network-ranges' 'Network Ranges'
+    $placedVnetIdsByResourceId = @{}
     $usedResourceIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $page = 0
     foreach ($vnet in $sortedVnets) {
@@ -3738,8 +4675,15 @@ function Export-DrawIoDocument {
         $builtPages++
         New-EnhancedDrawIoPage -Document $document -MxFile $mxFile -Data $Data -Index $networkIndex -Vnet $vnet `
             -PageIdByVnetId $pageIdByVnetId -DetailPageIdByResourceId $detailPageIdByResourceId `
-            -UsedResourceIds $usedResourceIds -ResourcesPerRow $ResourcesPerRow
+            -UsedResourceIds $usedResourceIds -ResourcesPerRow $ResourcesPerRow `
+            -PlacedVnetIdsByResourceId $placedVnetIdsByResourceId
     }
+    Write-StatusProgress 'Building diagram pages' 'Network ranges' $builtPages $plannedPages
+    $networkRanges = Get-NetworkRangeData -Data $Data -Index $networkIndex -Vnets $sortedVnets `
+        -PlacedVnetIdsByResourceId $placedVnetIdsByResourceId -IsScoped $isScoped
+    New-NetworkRangesPage -Document $document -Page $rangesPage -Ranges $networkRanges `
+        -PageIdByVnetId $pageIdByVnetId -DetailPageIdByResourceId $detailPageIdByResourceId
+    $builtPages++
     $detailPages = 0
     if ($IncludeRuleDetailPages) {
         foreach ($nsg in $nsgs) {
@@ -3767,7 +4711,7 @@ function Export-DrawIoDocument {
     $unmappedResources = @()
     if (-not $isScoped) { $unmappedResources = @(Get-UnmappedResources -Data $Data -UsedResourceIds $usedResourceIds) }
     $hasUnmappedPage = New-UnmappedDrawIoPage -Document $document -MxFile $mxFile -Resources $unmappedResources -DetailPageIdByResourceId $detailPageIdByResourceId
-    $totalPages = 1 + $page + $detailPages + $(if ($hasUnmappedPage) { 1 } else { 0 })
+    $totalPages = 2 + $page + $detailPages + $(if ($hasUnmappedPage) { 1 } else { 0 })
 
     $resolvedPath = Resolve-LocalFilePath $Path
     $directory = [System.IO.Path]::GetDirectoryName($resolvedPath)
@@ -3778,7 +4722,7 @@ function Export-DrawIoDocument {
     $settings.Indent = $true
     $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
     Complete-StatusProgress 'Building diagram pages'
-    $pageBreakdown = "1 overview + $page VNet + $detailPages detail"
+    $pageBreakdown = "1 overview + 1 ranges + $page VNet + $detailPages detail"
     if ($hasUnmappedPage) { $pageBreakdown += ' + 1 unmapped' }
     Write-StatusDetail "$pageBreakdown = $totalPages pages"
 
@@ -3788,6 +4732,7 @@ function Export-DrawIoDocument {
     Write-StatusDetail "$totalPages pages, $(Format-FileSize ([System.IO.FileInfo]::new($resolvedPath).Length))"
     return [pscustomobject]@{
         Path=$resolvedPath; Subscriptions=@(Get-DataRows $Data 'subscriptions').Count; VnetPages=$page; DetailPages=$detailPages; TotalPages=$totalPages; UnmappedResources=$unmappedResources.Count
+        Ranges=$networkRanges
     }
 }
 
@@ -3834,6 +4779,15 @@ try {
         -IncludeFirewallRules (-not $SkipFirewallRules.IsPresent) `
         -ResourcesPerRow $ResourcesPerRow `
         -VnetName $VnetName -ResourceGroup $ResourceGroup -ExcludeSubscriptionId $ExcludeSubscriptionId
+    if ($ExportRangesPath) {
+        $resolvedRanges = Resolve-LocalFilePath $ExportRangesPath
+        $rangesDirectory = [System.IO.Path]::GetDirectoryName($resolvedRanges)
+        if (-not [System.IO.Directory]::Exists($rangesDirectory)) {
+            $null = [System.IO.Directory]::CreateDirectory($rangesDirectory)
+        }
+        $rangeRowCount = Export-NetworkRangeCsv -Ranges $result.Ranges -Path $resolvedRanges
+        Write-StatusDetail "Exported $rangeRowCount network range row(s) to $resolvedRanges"
+    }
     $runTimer.Stop()
     Write-StatusMessage ''
     Write-StatusMessage "Done in $(Format-ElapsedTime $runTimer.Elapsed)" 'Green'
