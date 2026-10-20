@@ -1639,6 +1639,7 @@ function New-NetworkDataIndex {
         LocalNetworkGatewayById=(New-ResourceMap (Get-DataRows $Data 'localNetworkGateways'))
         ExpressRouteCircuitById=(New-ResourceMap (Get-DataRows $Data 'expressRouteCircuits'))
         VirtualHubById=(New-ResourceMap (Get-DataRows $Data 'virtualHubs'))
+        VpnSiteById=(New-ResourceMap (Get-DataRows $Data 'vpnSites'))
         FirewallPolicyById=(New-ResourceMap (Get-DataRows $Data 'firewallPolicies'))
         FirewallIdsByPolicyId=@{}
         ChildPolicyIdsByBasePolicyId=@{}
@@ -1661,6 +1662,8 @@ function New-NetworkDataIndex {
         LoadBalancerIdsByVnetId=@{}
         HubConnectionsByVnetId=@{}
         ExpressRouteGatewaysByHubId=@{}
+        VpnGatewaysByHubId=@{}
+        P2sVpnGatewaysByHubId=@{}
         PublicIpByIpConfigurationId=@{}
         SubnetReferencesByOccupantId=@{}
         FirewallRelationById=@{}
@@ -1788,6 +1791,15 @@ function New-NetworkDataIndex {
     foreach ($gateway in Get-DataRows $Data 'expressRouteGateways') {
         Add-IndexValue $index.ExpressRouteGatewaysByHubId (ConvertTo-ResourceId (Get-ObjectValue $gateway 'virtualHubId')) $gateway
     }
+    # The VPN gateway query returns one row per connection.
+    foreach ($group in @(Get-DataRows $Data 'vpnGateways' | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
+        if (-not $group.Name) { continue }
+        Add-IndexValue $index.VpnGatewaysByHubId (ConvertTo-ResourceId (Get-ObjectValue $group.Group[0] 'virtualHubId' '')) `
+            ([pscustomobject]@{ Id=[string]$group.Name; Rows=@($group.Group) })
+    }
+    foreach ($gateway in Get-DataRows $Data 'p2sVpnGateways') {
+        Add-IndexValue $index.P2sVpnGatewaysByHubId (ConvertTo-ResourceId (Get-ObjectValue $gateway 'virtualHubId' '')) $gateway
+    }
     foreach ($group in @(Get-DataRows $Data 'loadBalancers' | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
         $loadBalancerId = [string]$group.Name
         $frontendSubnetIds = @($group.Group | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'subnetId') } | Where-Object { $_ } | Sort-Object -Unique)
@@ -1841,6 +1853,8 @@ function Get-AzureIconPath {
         VPNConnection='networking/Connections.svg'; HubConnection='networking/Connections.svg'; RemoteGateway='networking/Virtual_Network_Gateways.svg'
         FirewallPolicy='networking/Azure_Firewall_Policy.svg'; FirewallManagementInterface='networking/Firewalls.svg'
         RemoteVNet='networking/Virtual_Networks.svg'; SubnetOccupant='general/All_Resources.svg'
+        VpnGateway='networking/Virtual_Network_Gateways.svg'; P2SVpnGateway='networking/Virtual_Network_Gateways.svg'
+        VpnSite='networking/Local_Network_Gateways.svg'
     }
     if ($icons.ContainsKey($Kind)) { return "img/lib/azure2/$($icons[$Kind])" }
     return 'img/lib/azure2/general/All_Resources.svg'
@@ -2013,6 +2027,38 @@ function Add-GraphEdge {
     }
 }
 
+function Get-ExternalLaneOrder {
+    param([object[]]$Nodes,[System.Collections.Generic.List[object]]$Edges)
+
+    # Each Virtual Hub is followed directly by what sits behind it, so its connectors
+    # stay short; the other remote resources keep their order above the hubs.
+    $nodeById = @{}
+    foreach ($node in $Nodes) { $nodeById[$node.Id] = $node }
+    $childIdsByParentId = @{}
+    foreach ($edge in $Edges) {
+        if ($edge.Kind -eq 'Hybrid' -and $nodeById.ContainsKey($edge.Source) -and $nodeById.ContainsKey($edge.Target)) {
+            Add-IndexValue $childIdsByParentId $edge.Source $edge.Target
+        }
+    }
+    $rankByKind = @{ ExpressRouteGateway=0; Firewall=1; P2SVpnGateway=2; VpnGateway=3; VpnSite=4 }
+    $placedIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $hubChains = [System.Collections.Generic.List[object]]::new()
+    foreach ($hub in @($Nodes | Where-Object Kind -eq 'VirtualHub' | Sort-Object Name, Id)) {
+        $pending = [System.Collections.Generic.Stack[string]]::new()
+        $pending.Push($hub.Id)
+        while ($pending.Count -gt 0) {
+            $id = $pending.Pop()
+            if (-not $placedIds.Add($id)) { continue }
+            $hubChains.Add($nodeById[$id])
+            $children = @($childIdsByParentId[$id] | Where-Object { $_ -and -not $placedIds.Contains($_) } | ForEach-Object { $nodeById[$_] } |
+                Sort-Object @{Expression={ if ($rankByKind.ContainsKey($_.Kind)) { $rankByKind[$_.Kind] } else { 9 } }}, Name, Id)
+            # Pushed in reverse so the first child is placed next.
+            for ($index = $children.Count - 1; $index -ge 0; $index--) { $pending.Push($children[$index].Id) }
+        }
+    }
+    return @(@($Nodes | Where-Object { -not $placedIds.Contains($_.Id) }) + @($hubChains))
+}
+
 function Get-PageConnectorStyle {
     param(
         [object]$Edge,
@@ -2060,6 +2106,11 @@ function Get-PageConnectorStyle {
     }
     if ($sourceLane -eq 'External' -and $targetLane -eq 'Connectivity') {
         return $base + 'exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;'
+    }
+    if ($sourceLane -eq 'External' -and $targetLane -eq 'External') {
+        # Stacked in the same lane: run along its right edge instead of wrapping
+        # around to the left side across the nodes in between.
+        return $base + 'exitX=1;exitY=0.35;exitPerimeter=1;entryX=1;entryY=0.65;entryPerimeter=1;'
     }
     if ($targetLane -eq 'External') {
         return $base + 'exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;'
@@ -2605,6 +2656,10 @@ function New-EnhancedDrawIoPage {
         $null=$UsedResourceIds.Add($connectionId)
     }
 
+    # Above this many sites behind one VPN gateway, one summary node replaces them, since
+    # every spoke connected to the hub would otherwise repeat every branch.
+    $maximumDrawnVpnSites = 5
+    $vpnSiteIdsByCollapsedNodeId = @{}
     foreach ($hubConnection in @($Index.HubConnectionsByVnetId[$vnetId] | ForEach-Object { $_ })) {
         $connectionId = ConvertTo-ResourceId (Get-ObjectValue $hubConnection 'id')
         $hubId = ConvertTo-ResourceId (Get-ObjectValue $hubConnection 'virtualHubId')
@@ -2649,6 +2704,81 @@ function New-EnhancedDrawIoPage {
                 "<b>$firewallName</b><br>$($firewallDetails -join '<br>')" External '' `
                 (Get-FirewallPolicyLinkAttribute $firewallItem $DetailPageIdByResourceId)
             Add-GraphEdge $edges $edgeKeys $hubId $firewallId 'hub firewall' Hybrid
+        }
+        foreach ($p2sGateway in @($Index.P2sVpnGatewaysByHubId[$hubId] | Where-Object { $null -ne $_ })) {
+            $p2sGatewayId = ConvertTo-ResourceId (Get-ObjectValue $p2sGateway 'id')
+            if (-not $p2sGatewayId) { continue }
+            $p2sGatewayName = [string](Get-ObjectValue $p2sGateway 'name' (Get-ResourceNameFromId $p2sGatewayId))
+            $configurations = @(ConvertFrom-JsonCollection (Get-ObjectValue $p2sGateway 'connectionConfigurations' ''))
+            $clientPools = @(Select-UniqueValue @(Get-ClientPoolPrefix $configurations))
+            $configurationNames = @(Select-UniqueValue @($configurations | ForEach-Object { Get-ObjectValue $_ 'name' '' }))
+            $p2sDetails = @(
+                $(if ($clientPools.Count -gt 0) { "Clients: $($clientPools -join ', ')" }),
+                $(if ($configurationNames.Count -gt 0) { "Configurations: $($configurationNames -join ', ')" })
+            ) | Where-Object { $_ }
+            Add-GraphNode $nodes $UsedResourceIds $p2sGatewayId $p2sGatewayName P2SVpnGateway 'Microsoft.Network/p2sVpnGateways' `
+                "<b>$p2sGatewayName</b><br>$(@($p2sDetails) -join '<br>')" External
+            Add-GraphEdge $edges $edgeKeys $hubId $p2sGatewayId 'point-to-site gateway' Hybrid
+        }
+        foreach ($vpnGateway in @($Index.VpnGatewaysByHubId[$hubId] | Where-Object { $null -ne $_ })) {
+            $vpnGatewayId = [string]$vpnGateway.Id
+            $vpnGatewayItem = $vpnGateway.Rows[0]
+            $vpnGatewayName = [string](Get-ObjectValue $vpnGatewayItem 'name' (Get-ResourceNameFromId $vpnGatewayId))
+            $gatewayAddresses = @(Select-UniqueValue @(ConvertFrom-JsonCollection (Get-ObjectValue $vpnGatewayItem 'ipConfigurations' '') |
+                ForEach-Object { Get-ObjectValue $_ 'publicIpAddress' '' }))
+            $scaleUnits = [string](Get-ObjectValue $vpnGatewayItem 'scaleUnits' '')
+            $gatewayAsn = [string](Get-ObjectValue $vpnGatewayItem 'bgpAsn' '')
+            $vpnGatewayDetails = @(
+                $(if ($gatewayAddresses.Count -gt 0) { "Public: $($gatewayAddresses -join ', ')" }),
+                ((@($(if ($scaleUnits) { "Scale units: $scaleUnits" }), $(if ($gatewayAsn) { "BGP ASN: $gatewayAsn" })) | Where-Object { $_ }) -join ' | ')
+            ) | Where-Object { $_ }
+            Add-GraphNode $nodes $UsedResourceIds $vpnGatewayId $vpnGatewayName VpnGateway 'Microsoft.Network/vpnGateways' `
+                "<b>$vpnGatewayName</b><br>$(@($vpnGatewayDetails) -join '<br>')" External
+            Add-GraphEdge $edges $edgeKeys $hubId $vpnGatewayId 'VPN gateway' Hybrid
+
+            $vpnConnections = @($vpnGateway.Rows | Where-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'remoteVpnSiteId' '') })
+            $siteIds = @($vpnConnections | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'remoteVpnSiteId' '') } | Sort-Object -Unique)
+            if ($siteIds.Count -gt $maximumDrawnVpnSites) {
+                $siteNames = @($siteIds | ForEach-Object {
+                    if ($Index.VpnSiteById.ContainsKey($_)) { [string](Get-ObjectValue $Index.VpnSiteById[$_] 'name' (Get-ResourceNameFromId $_)) } else { Get-ResourceNameFromId $_ }
+                } | Sort-Object)
+                $siteLines = @(foreach ($siteId in $siteIds) {
+                    $siteSummary = Get-VpnSiteSummary $Index.VpnSiteById[$siteId]
+                    "$(Get-ResourceNameFromId $siteId): $(if ($siteSummary.Prefixes.Count -gt 0) { $siteSummary.Prefixes -join ', ' } else { 'no static prefixes' })"
+                })
+                $shownNames = (@($siteNames | Select-Object -First 3) -join ', ') + $(if ($siteNames.Count -gt 3) { ', &#8230;' } else { '' })
+                $collapsedId = "$vpnGatewayId/vpn-sites"
+                Add-GraphNode $nodes $UsedResourceIds $collapsedId "$($siteIds.Count) VPN sites" VpnSite 'Microsoft.Network/vpnSites' `
+                    "<b>$($siteIds.Count) VPN sites</b><br>$shownNames<br><font color='#666666'>Prefixes on the Network Ranges page</font>" External '' `
+                    @{ tooltip = ($siteLines -join "`n") }
+                Add-GraphEdge $edges $edgeKeys $vpnGatewayId $collapsedId "$($vpnConnections.Count) connections" Hybrid
+                $vpnSiteIdsByCollapsedNodeId[$collapsedId] = $siteIds
+                foreach ($siteId in $siteIds) { $null = $UsedResourceIds.Add($siteId) }
+                continue
+            }
+            foreach ($vpnConnection in $vpnConnections) {
+                $siteId = ConvertTo-ResourceId (Get-ObjectValue $vpnConnection 'remoteVpnSiteId' '')
+                $site = if ($Index.VpnSiteById.ContainsKey($siteId)) { $Index.VpnSiteById[$siteId] } else { $null }
+                $siteName = if ($site) { [string](Get-ObjectValue $site 'name' (Get-ResourceNameFromId $siteId)) } else { Get-ResourceNameFromId $siteId }
+                if ($site) {
+                    $siteSummary = Get-VpnSiteSummary $site
+                    $siteDetails = @(
+                        $(if ($siteSummary.Prefixes.Count -gt 0) { $siteSummary.Prefixes -join ', ' }),
+                        ((@($(if ($siteSummary.Endpoints.Count -gt 0) { "Link: $($siteSummary.Endpoints -join ', ')" }),
+                            $(if ($siteSummary.Asns.Count -gt 0) { "BGP ASN: $($siteSummary.Asns -join ', ')" })) | Where-Object { $_ }) -join ' | ')
+                    ) | Where-Object { $_ }
+                } else {
+                    $siteDetails = @("<font color='#666666'>Site details not returned</font>")
+                }
+                Add-GraphNode $nodes $UsedResourceIds $siteId $siteName VpnSite 'Microsoft.Network/vpnSites' `
+                    "<b>$siteName</b><br>$(@($siteDetails) -join '<br>')" External
+                $vpnConnectionName = [string](Get-ObjectValue $vpnConnection 'connectionName' '')
+                if (-not $vpnConnectionName) { $vpnConnectionName = 'VPN connection' }
+                $vpnConnectionStatus = [string](Get-ObjectValue $vpnConnection 'connectionStatus' '')
+                $vpnConnectionLabel = if ($vpnConnectionStatus) { "$vpnConnectionName | $vpnConnectionStatus" } else { $vpnConnectionName }
+                Add-GraphEdge $edges $edgeKeys $vpnGatewayId $siteId $vpnConnectionLabel Hybrid '' '' `
+                    @{ tooltip = "Connection: $vpnConnectionName`nStatus: $vpnConnectionStatus" }
+            }
         }
     }
 
@@ -2929,7 +3059,7 @@ function New-EnhancedDrawIoPage {
 
     $unanchoredSecurity = @($securityNodes | Where-Object { -not $anchorByNodeId.ContainsKey($_.Id) })
     $unanchoredConnectivity = @($connectivityNodes | Where-Object { -not $anchorByNodeId.ContainsKey($_.Id) })
-    $unanchoredExternal = @($externalNodes | Where-Object { -not $anchorByNodeId.ContainsKey($_.Id) })
+    $unanchoredExternal = @(Get-ExternalLaneOrder -Nodes @($externalNodes | Where-Object { -not $anchorByNodeId.ContainsKey($_.Id) }) -Edges $edges)
     $maximumUnanchoredCount=[math]::Max($unanchoredSecurity.Count,[math]::Max($unanchoredConnectivity.Count,$unanchoredExternal.Count))
     $unanchoredHeight = if ($maximumUnanchoredCount -gt 0) {
         55 + ($maximumUnanchoredCount * $resourceRowPitch)
@@ -2944,7 +3074,10 @@ function New-EnhancedDrawIoPage {
     # A VNet without peerings has no index entry, and @($null) would count as one.
     $peeringCount=@($Index.PeeringsByVnetId[$vnetId] | Where-Object { $_ -and (Get-ObjectValue $_ 'remoteVnetId' '') }).Count
     $hybridResourceIds=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach($node in $nodes.Values|Where-Object{$_.Kind -in @('Gateway','RemoteGateway','LocalNetworkGateway','ExpressRouteCircuit','ExpressRouteGateway','VirtualHub')}){$null=$hybridResourceIds.Add($node.Id)}
+    foreach($node in $nodes.Values|Where-Object{$_.Kind -in @('Gateway','RemoteGateway','LocalNetworkGateway','ExpressRouteCircuit','ExpressRouteGateway','VirtualHub','VpnGateway','P2SVpnGateway','VpnSite')}){
+        # A summary node stands for several VPN sites, so count the sites it replaces.
+        if($vpnSiteIdsByCollapsedNodeId.ContainsKey($node.Id)){foreach($siteId in $vpnSiteIdsByCollapsedNodeId[$node.Id]){$null=$hybridResourceIds.Add($siteId)}}else{$null=$hybridResourceIds.Add($node.Id)}
+    }
     foreach($connectionId in $renderedConnectionIds){$null=$hybridResourceIds.Add($connectionId)}
     $hybridCount=$hybridResourceIds.Count
     $bastionCount=@($nodes.Values|Where-Object Kind -eq 'Bastion').Count
@@ -3130,7 +3263,9 @@ function Get-UnmappedResources {
         @{Data='virtualNetworkGateways';Id='id';Name='name';Kind='Gateway';Type='Microsoft.Network/virtualNetworkGateways'},@{Data='bastionHosts';Id='id';Name='name';Kind='Bastion';Type='Microsoft.Network/bastionHosts'},
         @{Data='localNetworkGateways';Id='id';Name='name';Kind='LocalNetworkGateway';Type='Microsoft.Network/localNetworkGateways'},@{Data='gatewayConnections';Id='id';Name='name';Kind='VPNConnection';Type='Microsoft.Network/connections'},
         @{Data='expressRouteCircuits';Id='id';Name='name';Kind='ExpressRouteCircuit';Type='Microsoft.Network/expressRouteCircuits'},@{Data='expressRouteGateways';Id='id';Name='name';Kind='ExpressRouteGateway';Type='Microsoft.Network/expressRouteGateways'},
-        @{Data='virtualHubs';Id='id';Name='name';Kind='VirtualHub';Type='Microsoft.Network/virtualHubs'},@{Data='hubVirtualNetworkConnections';Id='id';Name='name';Kind='HubConnection';Type='Microsoft.Network/virtualHubs/hubVirtualNetworkConnections'}
+        @{Data='virtualHubs';Id='id';Name='name';Kind='VirtualHub';Type='Microsoft.Network/virtualHubs'},@{Data='hubVirtualNetworkConnections';Id='id';Name='name';Kind='HubConnection';Type='Microsoft.Network/virtualHubs/hubVirtualNetworkConnections'},
+        @{Data='vpnGateways';Id='id';Name='name';Kind='VpnGateway';Type='Microsoft.Network/vpnGateways'},@{Data='p2sVpnGateways';Id='id';Name='name';Kind='P2SVpnGateway';Type='Microsoft.Network/p2sVpnGateways'},
+        @{Data='vpnSites';Id='id';Name='name';Kind='VpnSite';Type='Microsoft.Network/vpnSites'}
     )
     $result=@{};foreach($definition in $definitions){foreach($row in Get-DataRows $Data $definition.Data){$id=ConvertTo-ResourceId(Get-ObjectValue $row $definition.Id);if(-not$id-or$UsedResourceIds.Contains($id)-or$result.ContainsKey($id)){continue};$name=[string](Get-ObjectValue $row $definition.Name (Get-ResourceNameFromId $id));$result[$id]=[pscustomobject]@{Id=$id;Name=$name;Kind=$definition.Kind;Type=$definition.Type;Location=[string](Get-ObjectValue $row 'location' '');ResourceGroup=[string](Get-ObjectValue $row 'resourceGroup' '')}}};return @($result.Values|Sort-Object Kind,Name)
 }
@@ -3540,6 +3675,24 @@ function Get-ClientPoolPrefix {
     }
 }
 
+function Get-VpnSiteSummary {
+    param([AllowNull()][object]$Site)
+
+    # A site lists its device address either once for the site or per link.
+    $linkProperties = @(ConvertFrom-JsonCollection (Get-ObjectValue $Site 'siteLinks' '') | ForEach-Object { Get-ObjectValue $_ 'properties' $_ })
+    $endpoints = @(Select-UniqueValue (@(Get-ObjectValue $Site 'ipAddress' '') + @($linkProperties | ForEach-Object {
+        $endpoint = [string](Get-ObjectValue $_ 'ipAddress' '')
+        if (-not $endpoint) { $endpoint = [string](Get-ObjectValue $_ 'fqdn' '') }
+        $endpoint
+    })))
+    $asns = @(Select-UniqueValue (@(Get-ObjectValue $Site 'bgpAsn' '') + @($linkProperties | ForEach-Object {
+        Get-ObjectValue (Get-ObjectValue $_ 'bgpProperties' $null) 'asn' ''
+    })) | Where-Object { $_ -ne '0' })
+    return [pscustomobject]@{
+        Prefixes=@(Get-PrefixList (Get-ObjectValue $Site 'addressPrefixes' '')); Endpoints=$endpoints; Asns=$asns
+    }
+}
+
 function New-SubnetRangeRow {
     param([object]$Subnet)
 
@@ -3737,20 +3890,12 @@ function Get-NetworkRangeData {
         $hubIds = @($hubIdsBySiteId[$id] | Where-Object { $_ } | Sort-Object -Unique)
         $placement = Get-RangePlacement $PlacedVnetIdsByResourceId $Index.VnetById $hubIds
         if ($IsScoped -and $placement.VnetIds.Count -eq 0) { continue }
-        $linkProperties = @(ConvertFrom-JsonCollection (Get-ObjectValue $site 'siteLinks' '') | ForEach-Object { Get-ObjectValue $_ 'properties' $_ })
-        $endpoints = @(Select-UniqueValue (@(Get-ObjectValue $site 'ipAddress' '') + @($linkProperties | ForEach-Object {
-            $endpoint = [string](Get-ObjectValue $_ 'ipAddress' '')
-            if (-not $endpoint) { $endpoint = [string](Get-ObjectValue $_ 'fqdn' '') }
-            $endpoint
-        })))
-        $asns = @(Select-UniqueValue (@(Get-ObjectValue $site 'bgpAsn' '') + @($linkProperties | ForEach-Object {
-            Get-ObjectValue (Get-ObjectValue $_ 'bgpProperties' $null) 'asn' ''
-        })) | Where-Object { $_ -ne '0' })
+        $siteSummary = Get-VpnSiteSummary $site
         $hubNames = @($hubIds | ForEach-Object { Get-ResourceNameFromId $_ })
         $connectedRanges.Add((New-ConnectedRangeRow -Category 'VpnSite' -Type (Get-FriendlyResourceType 'VpnSite' '' '') `
-            -Name ([string](Get-ObjectValue $site 'name' (Get-ResourceNameFromId $id))) `
-            -Prefixes @(Get-PrefixList (Get-ObjectValue $site 'addressPrefixes' '')) `
-            -Detail @($(if ($endpoints.Count -gt 0) { "Link IP $($endpoints -join ', ')" }), $(if ($asns.Count -gt 0) { "BGP ASN $($asns -join ', ')" }),
+            -Name ([string](Get-ObjectValue $site 'name' (Get-ResourceNameFromId $id))) -Prefixes $siteSummary.Prefixes `
+            -Detail @($(if ($siteSummary.Endpoints.Count -gt 0) { "Link IP $($siteSummary.Endpoints -join ', ')" }),
+                $(if ($siteSummary.Asns.Count -gt 0) { "BGP ASN $($siteSummary.Asns -join ', ')" }),
                 $(if ($hubNames.Count -gt 0) { "Hub $($hubNames -join ', ')" } else { 'Not connected to a hub' })) `
             -Placement $placement -Source $site -ResourceId $id))
     }

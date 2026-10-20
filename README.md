@@ -38,7 +38,8 @@ connects to:
 - **Azure connectivity:** public IPs, NAT gateways, load balancers, and linked Azure
   resources that attach to or span the VNet
 - **Remote & hybrid:** peered VNets, on-premises gateways, ExpressRoute circuits, and
-  Virtual WAN hubs
+  Virtual WAN hubs with the ExpressRoute, VPN, and point-to-site gateways and VPN sites
+  behind them
 
 Labels carry the details you would otherwise look up one blade at a time, such as VM size,
 private IPs, public IP SKU and FQDN, subnet delegations, and private endpoint state. Hover
@@ -175,8 +176,8 @@ VNetAtlas currently queries and relates:
 - Azure Bastion hosts
 - Virtual Hubs, hub VNet connections, and associated ExpressRoute gateways and secured-hub
   firewalls
-- Virtual WAN VPN gateways, VPN sites, and point-to-site VPN gateways, and VPN client address
-  pools on virtual network gateways (Network Ranges page only)
+- Virtual WAN VPN gateways and their connections, VPN sites, and point-to-site VPN gateways
+- VPN client address pools on virtual network gateways (Network Ranges page only)
 
 A resource appears on a VNet page only when Azure Resource Graph exposes a subnet, NIC,
 backend, peering, gateway connection, or Virtual WAN hub connection relationship. Other
@@ -222,6 +223,8 @@ policies that no firewall uses.
   show or hide them.
 - Subnets are collapsible, and **View > Tags** can filter shapes by kind, lane, name, or
   subnet.
+- Behind a Virtual WAN VPN gateway, more than five VPN sites are drawn as one summary node
+  that lists them on hover; the Network Ranges page lists each site's prefixes.
 - The atlas follows draw.io's light and dark mode.
 
 Azure icons use draw.io's built-in `img/lib/azure2` library and render in the diagrams.net
