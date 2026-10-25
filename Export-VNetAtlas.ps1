@@ -37,11 +37,12 @@
 
 .PARAMETER InputDataPath
     Rebuild a diagram from JSON previously written by -ExportDataPath, without querying
-    Azure. Required for the Input parameter set.
+    Azure. Required for the Input parameter set. The diagram shows when that data was
+    collected, not when it was rebuilt.
 
 .PARAMETER ExportDataPath
     Also write the normalized query results to this path as JSON, so the same diagram can
-    be regenerated offline.
+    be regenerated offline. The JSON records when the data was collected.
 
 .PARAMETER VnetName
     Only include virtual networks whose name matches. Wildcards are supported. Combines
@@ -65,6 +66,16 @@
 .PARAMETER SkipDefaultNsgRules
     Omit Azure's built-in default security rules from NSG detail pages, leaving only the
     custom rules.
+
+.PARAMETER SkipNetworkRanges
+    Omit the Network Ranges page and its link on the network overview. -ExportRangesPath
+    still writes the ranges as CSV.
+
+.PARAMETER SkipUnmappedResources
+    Omit the Unmapped Resources page.
+
+.PARAMETER SkipCredit
+    Omit the "Created with VNetAtlas" line from the network overview legend.
 
 .PARAMETER ResourcesPerRow
     How many resources may share a line inside a subnet, 1 to 4. Lower values make pages
@@ -134,6 +145,9 @@
 
     Every generated file records its origin on the root mxfile element as
     host="VNetAtlas", agent="Export-VNetAtlas.ps1" and version="<exporter version>".
+    draw.io replaces these attributes when it saves the file, so the Network Overview
+    page also shows the tool name, version, and project link in its legend, unless
+    -SkipCredit is used.
 
     Private DNS zones, VNet links, record sets and private-endpoint DNS zone groups are
     outside the current scope.
@@ -184,6 +198,18 @@ param(
 
     [Parameter(ParameterSetName = 'Azure')]
     [Parameter(ParameterSetName = 'Input')]
+    [switch]$SkipNetworkRanges,
+
+    [Parameter(ParameterSetName = 'Azure')]
+    [Parameter(ParameterSetName = 'Input')]
+    [switch]$SkipUnmappedResources,
+
+    [Parameter(ParameterSetName = 'Azure')]
+    [Parameter(ParameterSetName = 'Input')]
+    [switch]$SkipCredit,
+
+    [Parameter(ParameterSetName = 'Azure')]
+    [Parameter(ParameterSetName = 'Input')]
     [ValidateRange(1,4)]
     [int]$ResourcesPerRow = 2,
 
@@ -211,10 +237,16 @@ $ErrorActionPreference = 'Stop'
 
 # Date-based version of the exporter (VYYYYMMDD). Surfaced in the banner and
 # stamped into the mxfile so a generated diagram records which build produced it.
-$script:VNetAtlasVersion = 'V20261002'
+$script:VNetAtlasVersion = 'V20261021'
+
+# Linked from the credit on the Network Overview page.
+$script:VNetAtlasProjectUrl = 'https://github.com/zh54321/VNetAtlas'
 
 # API version for every direct Azure Resource Manager read of firewall policy data.
 $script:FirewallPolicyApiVersion = '2024-05-01'
+
+# API version for the direct Azure Resource Manager read of Virtual WAN hub connections.
+$script:VirtualHubApiVersion = '2024-05-01'
 
 # Progress goes to the host stream so the single stdout summary line stays the
 # script's only pipeline output.
@@ -325,6 +357,9 @@ OUTPUT
   -SkipRuleDetailPages           Omit the NSG, route-table, and firewall-policy detail pages.
   -SkipFirewallRules             Do not read firewall policy rules or build their pages.
   -SkipDefaultNsgRules           Omit Azure's built-in default rules from NSG pages.
+  -SkipNetworkRanges             Omit the Network Ranges page. -ExportRangesPath still works.
+  -SkipUnmappedResources         Omit the Unmapped Resources page.
+  -SkipCredit                    Omit the "Created with VNetAtlas" line from the overview.
   -Quiet                         Suppress the banner and progress output.
 
 OTHER
@@ -455,6 +490,37 @@ function ConvertFrom-JsonCollection {
     }
 }
 
+function Format-CollectedAt {
+    param([AllowNull()][object]$Value)
+
+    # Windows PowerShell reads the ISO timestamp from JSON as text, PowerShell 7 as a
+    # DateTime, so both are accepted and rendered the same way. Returns '' for data
+    # exported before the collection time was recorded.
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [datetime]) {
+        $moment = if ($Value.Kind -eq [System.DateTimeKind]::Local) { $Value.ToUniversalTime() } else { $Value }
+    } else {
+        $moment = [datetime]::MinValue
+        $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        if (-not [datetime]::TryParse([string]$Value, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$moment)) { return '' }
+    }
+    return $moment.ToString('yyyy-MM-dd HH:mm', [System.Globalization.CultureInfo]::InvariantCulture) + ' UTC'
+}
+
+function ConvertTo-NullableBoolean {
+    param([AllowNull()][object]$Value)
+
+    # Resource Graph returns tobool() columns as 1 or 0, while the sample data and
+    # hand-edited JSON use true or false. Returns $null when the value is missing or
+    # not recognized, so callers can tell "off" from "not collected".
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [bool]) { return $Value }
+    $text = ([string]$Value).Trim()
+    if ($text -eq 'true' -or $text -eq '1') { return $true }
+    if ($text -eq 'false' -or $text -eq '0') { return $false }
+    return $null
+}
+
 function ConvertTo-DisplayList {
     param([AllowNull()][object]$Value)
 
@@ -567,6 +633,63 @@ function Invoke-ArmGetRequest {
         return [pscustomobject]@{ Content = $null; Error = "HTTP $statusCode with unreadable content" }
     }
     return [pscustomobject]@{ Content = $content; Error = '' }
+}
+
+function Get-HubConnectionData {
+    param([object[]]$HubRows)
+
+    # Resource Graph does not index a Virtual WAN hub's VNet connections, so each hub's list
+    # is read from ARM and shaped like the other query rows. A hub whose list cannot be read
+    # is reported and contributes no connections.
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $requestCount = 0
+    $hubIds = @($HubRows | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id' '') } | Where-Object { $_ } | Sort-Object -Unique)
+    for ($hubIndex = 0; $hubIndex -lt $hubIds.Count; $hubIndex++) {
+        $hubId = $hubIds[$hubIndex]
+        $hubName = Get-ResourceNameFromId $hubId
+        Write-StatusProgress 'Reading Virtual WAN hub connections' $hubName $hubIndex $hubIds.Count
+        $connections = [System.Collections.Generic.List[object]]::new()
+        $readError = ''
+        $visitedLinks = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+        $target = "${hubId}/hubVirtualNetworkConnections?api-version=$script:VirtualHubApiVersion"
+        while ($target) {
+            if (-not $visitedLinks.Add($target)) {
+                $readError = 'Pagination returned a repeated link'
+                break
+            }
+            $page = Invoke-ArmGetRequest $target
+            $requestCount++
+            if ($page.Error) {
+                $readError = $page.Error
+                break
+            }
+            foreach ($connection in @(Get-ObjectValue $page.Content 'value' @())) {
+                if ($null -ne $connection) { $connections.Add($connection) }
+            }
+            $target = [string](Get-ObjectValue $page.Content 'nextLink' '')
+        }
+        if ($readError) {
+            Write-Warning "Virtual WAN hub '$hubName': VNet connections could not be read ($readError)."
+            continue
+        }
+        foreach ($connection in $connections) {
+            $rawId = [string](Get-ObjectValue $connection 'id' '')
+            $properties = Get-ObjectValue $connection 'properties' $null
+            $routing = Get-ObjectValue $properties 'routingConfiguration' $null
+            $rows.Add([pscustomobject]@{
+                id = ConvertTo-ResourceId $rawId
+                name = [string](Get-ObjectValue $connection 'name' (Get-ResourceNameFromId $rawId))
+                resourceGroup = $(if ($rawId -match '/resourceGroups/([^/]+)/') { $Matches[1] } else { '' })
+                subscriptionId = $(if ($rawId -match '^/subscriptions/([^/]+)/') { $Matches[1] } else { '' })
+                virtualHubId = $hubId
+                remoteVnetId = ConvertTo-ResourceId (Get-ObjectValue (Get-ObjectValue $properties 'remoteVirtualNetwork' $null) 'id' '')
+                provisioningState = [string](Get-ObjectValue $properties 'provisioningState' '')
+                routingConfiguration = $(if ($null -ne $routing) { $routing | ConvertTo-Json -Depth 20 -Compress } else { '' })
+            })
+        }
+    }
+    Complete-StatusProgress 'Reading Virtual WAN hub connections'
+    return [pscustomobject]@{ Rows = $rows.ToArray(); RequestCount = $requestCount }
 }
 
 function Get-FirewallPolicyData {
@@ -707,6 +830,20 @@ function Get-FirewallPolicyData {
     }
 }
 
+function Get-EnabledAzSubscription {
+    param([string]$TenantId)
+
+    # An expired or MFA-blocked sign-in does not fail here: Az writes a warning and
+    # returns no subscriptions, which would otherwise read as an empty tenant.
+    $azWarnings = $null
+    $subscriptions = @(Get-AzSubscription -TenantId $TenantId -ErrorAction Stop -WarningAction SilentlyContinue -WarningVariable azWarnings |
+        Where-Object { -not $_.State -or $_.State -eq 'Enabled' })
+    foreach ($warning in @($azWarnings)) { Write-Verbose "Get-AzSubscription: $warning" }
+    $signInFailed = $subscriptions.Count -eq 0 -and
+        @($azWarnings | Where-Object { [string]$_ -match 'acquire token|interaction is required|Authentication failed|AADSTS' }).Count -gt 0
+    return [pscustomobject]@{ Subscriptions=$subscriptions; SignInFailed=$signInFailed }
+}
+
 function Get-AzureNetworkData {
     param([string[]]$Subscriptions, [string]$RequestedTenantId, [switch]$SkipFirewallRules)
 
@@ -729,8 +866,17 @@ function Get-AzureNetworkData {
     }
 
     $tenantId = [string]$context.Tenant.Id
-    $availableSubscriptions = @(Get-AzSubscription -TenantId $tenantId -ErrorAction Stop |
-        Where-Object { -not $_.State -or $_.State -eq 'Enabled' })
+    $subscriptionLookup = Get-EnabledAzSubscription -TenantId $tenantId
+    if ($subscriptionLookup.SignInFailed) {
+        # Renew the sign-in once, the same way a run without any sign-in starts.
+        Write-StatusDetail "Azure sign-in for tenant $tenantId expired or needs MFA; signing in again"
+        $null = Connect-AzAccount -Tenant $tenantId
+        $subscriptionLookup = Get-EnabledAzSubscription -TenantId $tenantId
+        if ($subscriptionLookup.SignInFailed) {
+            throw "Azure sign-in for tenant '$tenantId' failed, so no subscriptions could be read.`nRun 'Connect-AzAccount -TenantId $tenantId' and try again. Use -Verbose to see the message from Azure."
+        }
+    }
+    $availableSubscriptions = @($subscriptionLookup.Subscriptions)
     if (-not $Subscriptions -or $Subscriptions.Count -eq 0) {
         $Subscriptions = @($availableSubscriptions | ForEach-Object { [string]$_.Id } | Sort-Object -Unique)
         if ($Subscriptions.Count -eq 0) {
@@ -872,9 +1018,15 @@ Resources
 | project id=tolower(tostring(peering.id)), name=tostring(peering.name),
           vnetId=tolower(id), remoteVnetId=tolower(tostring(peering.properties.remoteVirtualNetwork.id)),
           state=tostring(peering.properties.peeringState),
+          allowVirtualNetworkAccess=tobool(peering.properties.allowVirtualNetworkAccess),
           allowForwardedTraffic=tobool(peering.properties.allowForwardedTraffic),
           allowGatewayTransit=tobool(peering.properties.allowGatewayTransit),
           useRemoteGateways=tobool(peering.properties.useRemoteGateways),
+          peerCompleteVnets=tobool(peering.properties.peerCompleteVnets),
+          localSubnetNames=tostring(peering.properties.localSubnetNames),
+          remoteSubnetNames=tostring(peering.properties.remoteSubnetNames),
+          peeringSyncLevel=tostring(peering.properties.peeringSyncLevel),
+          localPeeredAddressPrefixes=tostring(peering.properties.localAddressSpace.addressPrefixes),
           peeredAddressPrefixes=tostring(peering.properties.remoteAddressSpace.addressPrefixes),
           remoteAddressPrefixes=tostring(peering.properties.remoteVirtualNetworkAddressSpace.addressPrefixes),
           subscriptionId, resourceGroup
@@ -889,6 +1041,7 @@ Resources
 | project id=tolower(id), name, resourceGroup, subscriptionId, location, sku=tostring(sku.name),
           frontendName=tostring(frontend.name),
           subnetId=tolower(tostring(frontend.properties.subnet.id)),
+          privateIpAddress=tostring(frontend.properties.privateIPAddress),
           publicIpId=tolower(tostring(frontend.properties.publicIPAddress.id)),
           backendPools=tostring(properties.backendAddressPools),
           ruleCount=array_length(properties.loadBalancingRules)
@@ -1031,32 +1184,31 @@ Resources
           provisioningState=tostring(properties.provisioningState)
 | order by id asc
 '@
+        # Only the circuit reference and state are read from each connection, so its
+        # authorization key is never part of the result.
         expressRouteGateways = @'
 Resources
 | where type =~ 'microsoft.network/expressroutegateways'
+| extend gatewayConnections=iff(array_length(properties.expressRouteConnections) > 0,
+                                properties.expressRouteConnections, dynamic([{}]))
+| mv-expand connection=gatewayConnections limit 2000
 | project id=tolower(id), name, resourceGroup, subscriptionId, location,
           virtualHubId=tolower(tostring(properties.virtualHub.id)),
-          scaleUnits=toint(properties.autoScaleConfiguration.bounds.max)
-| order by id asc
+          scaleUnits=toint(properties.autoScaleConfiguration.bounds.max),
+          connectionName=tostring(connection.name),
+          circuitPeeringId=tolower(tostring(connection.properties.expressRouteCircuitPeering.id)),
+          connectionState=tostring(connection.properties.provisioningState)
+| order by id asc, connectionName asc
 '@
         virtualHubs = @'
 Resources
 | where type =~ 'microsoft.network/virtualhubs'
 | project id=tolower(id), name, resourceGroup, subscriptionId, location,
+          virtualWanId=tolower(tostring(properties.virtualWan.id)),
           addressPrefix=tostring(properties.addressPrefix),
           virtualRouterAsn=tostring(properties.virtualRouterAsn),
           virtualRouterIps=tostring(properties.virtualRouterIps),
           provisioningState=tostring(properties.provisioningState)
-| order by id asc
-'@
-        hubVirtualNetworkConnections = @'
-Resources
-| where type =~ 'microsoft.network/virtualhubs/hubvirtualnetworkconnections'
-| project id=tolower(id), name, resourceGroup, subscriptionId,
-          virtualHubId=tolower(extract('(?i)(.*)/hubvirtualnetworkconnections/[^/]+$', 1, id)),
-          remoteVnetId=tolower(tostring(properties.remoteVirtualNetwork.id)),
-          provisioningState=tostring(properties.provisioningState),
-          routingConfiguration=tostring(properties.routingConfiguration)
 | order by id asc
 '@
         p2sVpnGateways = @'
@@ -1110,15 +1262,18 @@ Resources
         'vnetPeerings', 'loadBalancers', 'applicationGateways', 'firewalls', 'privateEndpoints',
         'routeTables', 'virtualNetworkGateways', 'bastionHosts', 'localNetworkGateways',
         'gatewayConnections', 'expressRouteCircuits', 'expressRouteGateways', 'virtualHubs',
-        'hubVirtualNetworkConnections', 'p2sVpnGateways', 'vpnSites', 'vpnGateways'
+        'p2sVpnGateways', 'vpnSites', 'vpnGateways'
     )
     # Column identifying the expanded resource in each query that uses mv-expand.
     $expandParentPropertyByQuery = @{
         subnets = 'vnetId'; nics = 'nicId'; virtualMachines = 'id'; vnetPeerings = 'vnetId'
-        loadBalancers = 'id'; firewalls = 'id'; privateEndpoints = 'id'; vpnGateways = 'id'
+        loadBalancers = 'id'; firewalls = 'id'; privateEndpoints = 'id'; vpnGateways = 'id'; expressRouteGateways = 'id'
         virtualNetworkGateways = 'id'; bastionHosts = 'id'
     }
     $data = [ordered]@{}
+    # When the data was read. A diagram rebuilt later from the exported JSON shows this
+    # time, not the time it was drawn.
+    $data['collectedAt'] = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ', [System.Globalization.CultureInfo]::InvariantCulture)
     $totalRows = 0
     $queryTimer = [System.Diagnostics.Stopwatch]::StartNew()
     for ($queryIndex = 0; $queryIndex -lt $queryNames.Count; $queryIndex++) {
@@ -1135,6 +1290,11 @@ Resources
     $queryTimer.Stop()
     Complete-StatusProgress 'Querying Azure Resource Graph'
     Write-StatusDetail "$($queryNames.Count) queries, $totalRows rows in $(Format-ElapsedTime $queryTimer.Elapsed)"
+    $hubConnectionData = Get-HubConnectionData -HubRows $data['virtualHubs']
+    $data['hubVirtualNetworkConnections'] = @($hubConnectionData.Rows)
+    if ($hubConnectionData.RequestCount -gt 0) {
+        Write-StatusDetail "$(@($hubConnectionData.Rows).Count) Virtual WAN hub connections, $($hubConnectionData.RequestCount) ARM requests"
+    }
     if (-not $SkipFirewallRules) {
         $policyData = Get-FirewallPolicyData -FirewallRows $data['firewalls']
         $data['firewallPolicies'] = @($policyData.Rows)
@@ -1269,9 +1429,10 @@ function Set-MxPageSize {
     )
 
     # draw.io paginates printing and PDF export on these values, so derive them
-    # from the drawing instead of a fixed sheet that tall pages spill out of.
-    Set-XmlAttribute $Model 'pageWidth'  ([int][math]::Max(850, [math]::Ceiling($ContentRight + $Margin)))
-    Set-XmlAttribute $Model 'pageHeight' ([int][math]::Max(1100, [math]::Ceiling($ContentBottom + $Margin)))
+    # from the drawing alone: content larger than the page spills onto extra sheets,
+    # and a fixed minimum would pad small pages with blank space.
+    Set-XmlAttribute $Model 'pageWidth'  ([int][math]::Ceiling($ContentRight + $Margin))
+    Set-XmlAttribute $Model 'pageHeight' ([int][math]::Ceiling($ContentBottom + $Margin))
 }
 
 function Add-MxVertex {
@@ -1345,7 +1506,9 @@ function Add-MxEdge {
         [string]$AzureId = '',
         [string]$ResourceType = '',
         [hashtable]$Attributes,
-        [string]$Parent = '1'
+        [string]$Parent = '1',
+        # Waypoints in the edge parent's coordinates, as objects with X and Y.
+        [object[]]$Points = @()
     )
 
     $wrapCell=[bool]($AzureId -or $ResourceType -or ($Attributes -and $Attributes.Count -gt 0))
@@ -1374,6 +1537,17 @@ function Add-MxEdge {
     $geometry = $Document.CreateElement('mxGeometry')
     Set-XmlAttribute $geometry 'relative' '1'
     Set-XmlAttribute $geometry 'as' 'geometry'
+    if ($Points.Count -gt 0) {
+        $pointArray = $Document.CreateElement('Array')
+        Set-XmlAttribute $pointArray 'as' 'points'
+        foreach ($point in $Points) {
+            $mxPoint = $Document.CreateElement('mxPoint')
+            Set-XmlAttribute $mxPoint 'x' $point.X
+            Set-XmlAttribute $mxPoint 'y' $point.Y
+            $null = $pointArray.AppendChild($mxPoint)
+        }
+        $null = $geometry.AppendChild($pointArray)
+    }
     $null = $cell.AppendChild($geometry)
     if($wrapCell){$null=$container.AppendChild($cell);$null=$Root.AppendChild($container)}else{$null=$Root.AppendChild($cell)}
 }
@@ -1661,7 +1835,9 @@ function New-NetworkDataIndex {
         LoadBalancerRelationById=@{}
         LoadBalancerIdsByVnetId=@{}
         HubConnectionsByVnetId=@{}
+        HubConnections=[System.Collections.Generic.List[object]]::new()
         ExpressRouteGatewaysByHubId=@{}
+        ExpressRouteConnectionsByGatewayId=@{}
         VpnGatewaysByHubId=@{}
         P2sVpnGatewaysByHubId=@{}
         PublicIpByIpConfigurationId=@{}
@@ -1673,6 +1849,7 @@ function New-NetworkDataIndex {
         GatewayIdsBySubnetId=@{}
         BastionRelationById=@{}
         BastionIdsBySubnetId=@{}
+        PrivateIpOwners=@{}
     }
     foreach ($publicIp in Get-DataRows $Data 'publicIps') {
         $ipConfigurationId = ConvertTo-ResourceId (Get-ObjectValue $publicIp 'ipConfigurationId' '')
@@ -1698,6 +1875,45 @@ function New-NetworkDataIndex {
         Add-IndexValue $index.NicRowsBySubnetId (ConvertTo-ResourceId (Get-ObjectValue $nic 'subnetId')) $nic
         Add-IndexValue $index.NicRowsByNicId (ConvertTo-ResourceId (Get-ObjectValue $nic 'nicId')) $nic
         Add-IndexValue $index.NicRowsByNsgId (ConvertTo-ResourceId (Get-ObjectValue $nic 'nicNsgId')) $nic
+    }
+    # Resources holding a private IP that a route or a DNAT rule can point to, with their
+    # VNet: firewalls, VM and private endpoint NICs, and the private frontends of load
+    # balancers and application gateways. See Resolve-PrivateIpOwner.
+    $privateEndpointNameByNicId = @{}
+    foreach ($endpoint in Get-DataRows $Data 'privateEndpoints') {
+        foreach ($endpointNicId in @(Get-IdsFromJson (Get-ObjectValue $endpoint 'networkInterfaces' ''))) {
+            $privateEndpointNameByNicId[$endpointNicId] = [string](Get-ObjectValue $endpoint 'name' '')
+        }
+    }
+    $ipOwners = @(
+        foreach ($firewall in Get-DataRows $Data 'firewalls') {
+            $firewallName = [string](Get-ObjectValue $firewall 'name' '')
+            [pscustomobject]@{ Ip=[string](Get-ObjectValue $firewall 'privateIpAddress' ''); Name=$firewallName; SubnetId=[string](Get-ObjectValue $firewall 'subnetId' '') }
+            [pscustomobject]@{ Ip=[string](Get-ObjectValue $firewall 'hubPrivateIpAddress' ''); Name=$firewallName; SubnetId='' }
+        }
+        foreach ($nic in Get-DataRows $Data 'nics') {
+            $nicId = ConvertTo-ResourceId (Get-ObjectValue $nic 'nicId' '')
+            $vmId = [string](Get-ObjectValue $nic 'attachedResourceId' '')
+            $nicOwner = if ($vmId) { Get-ResourceNameFromId $vmId } elseif ($privateEndpointNameByNicId.ContainsKey($nicId)) { $privateEndpointNameByNicId[$nicId] } else { [string](Get-ObjectValue $nic 'nicName' '') }
+            [pscustomobject]@{ Ip=[string](Get-ObjectValue $nic 'privateIpAddress' ''); Name=$nicOwner; SubnetId=[string](Get-ObjectValue $nic 'subnetId' '') }
+        }
+        foreach ($loadBalancer in Get-DataRows $Data 'loadBalancers') {
+            [pscustomobject]@{ Ip=[string](Get-ObjectValue $loadBalancer 'privateIpAddress' ''); Name=[string](Get-ObjectValue $loadBalancer 'name' ''); SubnetId=[string](Get-ObjectValue $loadBalancer 'subnetId' '') }
+        }
+        foreach ($applicationGateway in Get-DataRows $Data 'applicationGateways') {
+            foreach ($frontend in @(ConvertFrom-JsonCollection (Get-ObjectValue $applicationGateway 'frontendIpConfigurations' ''))) {
+                $frontendProperties = Get-ObjectValue $frontend 'properties' $frontend
+                $frontendSubnet = Get-ObjectValue $frontendProperties 'subnet' $null
+                $frontendSubnetId = if ($frontendSubnet) { [string](Get-ObjectValue $frontendSubnet 'id' '') } else { [string](Get-ObjectValue $applicationGateway 'subnetId' '') }
+                [pscustomobject]@{ Ip=[string](Get-ObjectValue $frontendProperties 'privateIPAddress' ''); Name=[string](Get-ObjectValue $applicationGateway 'name' ''); SubnetId=$frontendSubnetId }
+            }
+        }
+    )
+    foreach ($owner in $ipOwners) {
+        if (-not $owner.Ip -or -not $owner.Name) { continue }
+        $ownerVnetId = if ([string]$owner.SubnetId -match '^(.*/virtualnetworks/[^/]+)/subnets/') { ConvertTo-ResourceId $Matches[1] } else { '' }
+        if (-not $index.PrivateIpOwners.ContainsKey($owner.Ip)) { $index.PrivateIpOwners[$owner.Ip] = @{} }
+        if (-not $index.PrivateIpOwners[$owner.Ip].ContainsKey($owner.Name)) { $index.PrivateIpOwners[$owner.Ip][$owner.Name] = $ownerVnetId }
     }
     foreach ($vm in Get-DataRows $Data 'virtualMachines') {
         Add-IndexValue $index.VmRowsByNicId (ConvertTo-ResourceId (Get-ObjectValue $vm 'nicId')) $vm
@@ -1787,9 +2003,37 @@ function New-NetworkDataIndex {
     }
     foreach ($connection in Get-DataRows $Data 'hubVirtualNetworkConnections') {
         Add-IndexValue $index.HubConnectionsByVnetId (ConvertTo-ResourceId (Get-ObjectValue $connection 'remoteVnetId')) $connection
+        $index.HubConnections.Add($connection)
     }
-    foreach ($gateway in Get-DataRows $Data 'expressRouteGateways') {
-        Add-IndexValue $index.ExpressRouteGatewaysByHubId (ConvertTo-ResourceId (Get-ObjectValue $gateway 'virtualHubId')) $gateway
+    # Connecting a VNet to a Virtual WAN hub also peers it with the hub's Microsoft-managed
+    # VNet, named HV_<hub>_<guid>. Where the connection itself is missing, for example when
+    # the hub's connections could not be read, that peering stands in for it, provided
+    # exactly one hub in the export has that name.
+    $hubIdsByName = @{}
+    foreach ($hub in Get-DataRows $Data 'virtualHubs') {
+        Add-IndexValue $hubIdsByName ([string](Get-ObjectValue $hub 'name' '')).ToLowerInvariant() (ConvertTo-ResourceId (Get-ObjectValue $hub 'id'))
+    }
+    foreach ($peering in Get-DataRows $Data 'vnetPeerings') {
+        $remoteName = Get-ResourceNameFromId (ConvertTo-ResourceId (Get-ObjectValue $peering 'remoteVnetId' ''))
+        if (-not ($remoteName -match '^hv_(.+)_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')) { continue }
+        $hubIds = @($hubIdsByName[$Matches[1].ToLowerInvariant()] | Where-Object { $_ })
+        if ($hubIds.Count -ne 1) { continue }
+        $vnetId = ConvertTo-ResourceId (Get-ObjectValue $peering 'vnetId' '')
+        $known = @($index.HubConnectionsByVnetId[$vnetId] | Where-Object { $null -ne $_ -and (ConvertTo-ResourceId (Get-ObjectValue $_ 'virtualHubId' '')) -eq $hubIds[0] })
+        if ($known.Count -gt 0) { continue }
+        $peeringState = [string](Get-ObjectValue $peering 'state' '')
+        $inferred = [pscustomobject]@{
+            id = ''; name = 'from managed peering'; virtualHubId = $hubIds[0]; remoteVnetId = $vnetId
+            provisioningState = $(if ($peeringState -eq 'Connected') { 'Succeeded' } else { $peeringState })
+        }
+        Add-IndexValue $index.HubConnectionsByVnetId $vnetId $inferred
+        $index.HubConnections.Add($inferred)
+    }
+    # The ExpressRoute gateway query returns one row per connection.
+    foreach ($group in @(Get-DataRows $Data 'expressRouteGateways' | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
+        if (-not $group.Name) { continue }
+        Add-IndexValue $index.ExpressRouteGatewaysByHubId (ConvertTo-ResourceId (Get-ObjectValue $group.Group[0] 'virtualHubId')) $group.Group[0]
+        $index.ExpressRouteConnectionsByGatewayId[[string]$group.Name] = @($group.Group | Where-Object { Get-ObjectValue $_ 'circuitPeeringId' '' })
     }
     # The VPN gateway query returns one row per connection.
     foreach ($group in @(Get-DataRows $Data 'vpnGateways' | Group-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') } | Sort-Object Name)) {
@@ -1836,8 +2080,80 @@ function New-NetworkDataIndex {
     return [pscustomobject]$index
 }
 
+function Get-ServiceTypeInfo {
+    param([AllowNull()][string]$ResourceType)
+
+    # Services known only from a reference: private endpoint targets and resources
+    # deployed into a subnet. Each type maps to a display name and, where draw.io's
+    # Azure library has a matching shape, an icon path below img/lib/azure2. A new
+    # non-square icon also needs its proportions in Get-AzureIconSize.
+    $serviceTypes = @{
+        'microsoft.storage/storageaccounts' = @('Storage account', 'storage/Storage_Accounts.svg')
+        'microsoft.storagesync/storagesyncservices' = @('Storage Sync Service', 'storage/Storage_Sync_Services.svg')
+        'microsoft.compute/diskaccesses' = @('Disk access', 'compute/Disks.svg')
+        'microsoft.netapp/netappaccounts' = @('Azure NetApp Files account', 'storage/Azure_NetApp_Files.svg')
+        'microsoft.keyvault/vaults' = @('Key vault', 'security/Key_Vaults.svg')
+        'microsoft.keyvault/managedhsms' = @('Managed HSM', 'security/Key_Vaults.svg')
+        'microsoft.sql/servers' = @('Azure SQL server', 'databases/SQL_Server.svg')
+        'microsoft.sql/managedinstances' = @('SQL Managed Instance', 'databases/SQL_Managed_Instance.svg')
+        'microsoft.dbforpostgresql/flexibleservers' = @('Azure Database for PostgreSQL flexible server', 'databases/Azure_Database_PostgreSQL_Server.svg')
+        'microsoft.dbformysql/flexibleservers' = @('Azure Database for MySQL flexible server', 'databases/Azure_Database_MySQL_Server.svg')
+        'microsoft.documentdb/databaseaccounts' = @('Azure Cosmos DB account', 'databases/Azure_Cosmos_DB.svg')
+        'microsoft.cache/redis' = @('Azure Cache for Redis', 'databases/Cache_Redis.svg')
+        'microsoft.cache/redisenterprise' = @('Azure Managed Redis', 'databases/Azure_Managed_Redis.svg')
+        'microsoft.synapse/workspaces' = @('Synapse workspace', 'analytics/Azure_Synapse_Analytics.svg')
+        'microsoft.kusto/clusters' = @('Azure Data Explorer cluster', 'databases/Azure_Data_Explorer_Clusters.svg')
+        'microsoft.datafactory/factories' = @('Data Factory', 'databases/Data_Factory.svg')
+        'microsoft.databricks/workspaces' = @('Azure Databricks workspace', 'analytics/Azure_Databricks.svg')
+        'microsoft.purview/accounts' = @('Microsoft Purview account', 'databases/Azure_Purview_Accounts.svg')
+        'microsoft.cognitiveservices/accounts' = @('Azure AI services account', 'ai_machine_learning/Cognitive_Services.svg')
+        'microsoft.search/searchservices' = @('AI Search service', 'app_services/Search_Services.svg')
+        'microsoft.machinelearningservices/workspaces' = @('Azure Machine Learning workspace', 'ai_machine_learning/Machine_Learning.svg')
+        'microsoft.web/sites' = @('App Service', 'app_services/App_Services.svg')
+        'microsoft.web/serverfarms' = @('App Service plan', 'app_services/App_Service_Plans.svg')
+        'microsoft.web/staticsites' = @('Static Web App', 'preview/Static_Apps.svg')
+        'microsoft.app/managedenvironments' = @('Container Apps environment', 'other/Container_App_Environments.svg')
+        'microsoft.containerservice/managedclusters' = @('AKS cluster', 'containers/Kubernetes_Services.svg')
+        'microsoft.containerregistry/registries' = @('Container registry', 'containers/Container_Registries.svg')
+        'microsoft.containerinstance/containergroups' = @('Container instance group', 'containers/Container_Instances.svg')
+        'microsoft.apimanagement/service' = @('API Management service', 'app_services/API_Management_Services.svg')
+        'microsoft.appconfiguration/configurationstores' = @('App Configuration store', 'integration/App_Configuration.svg')
+        'microsoft.servicebus/namespaces' = @('Service Bus namespace', 'integration/Service_Bus.svg')
+        'microsoft.eventhub/namespaces' = @('Event Hubs namespace', 'analytics/Event_Hubs.svg')
+        'microsoft.eventgrid/topics' = @('Event Grid topic', 'integration/Event_Grid_Topics.svg')
+        'microsoft.eventgrid/domains' = @('Event Grid domain', 'integration/Event_Grid_Domains.svg')
+        'microsoft.eventgrid/namespaces' = @('Event Grid namespace', 'integration/Event_Grid_Topics.svg')
+        'microsoft.relay/namespaces' = @('Relay namespace', 'integration/Relays.svg')
+        'microsoft.devices/iothubs' = @('IoT Hub', 'iot/IoT_Hub.svg')
+        'microsoft.signalrservice/signalr' = @('SignalR Service', 'web/SignalR.svg')
+        'microsoft.signalrservice/webpubsub' = @('Web PubSub', 'integration/Azure_PubSub.svg')
+        'microsoft.insights/privatelinkscopes' = @('Azure Monitor Private Link Scope', 'management_governance/Monitor.svg')
+        'microsoft.hybridcompute/privatelinkscopes' = @('Azure Arc Private Link Scope', 'management_governance/Azure_Arc.svg')
+        'microsoft.recoveryservices/vaults' = @('Recovery Services vault', 'management_governance/Recovery_Services_Vaults.svg')
+        'microsoft.automation/automationaccounts' = @('Automation account', 'management_governance/Automation_Accounts.svg')
+        'microsoft.desktopvirtualization/hostpools' = @('Azure Virtual Desktop host pool', 'compute/Host_Pools.svg')
+        'microsoft.desktopvirtualization/workspaces' = @('Azure Virtual Desktop workspace', 'compute/Workspaces.svg')
+        'microsoft.dashboard/grafana' = @('Azure Managed Grafana', 'other/Grafana.svg')
+        'microsoft.network/privatelinkservices' = @('Private Link service', 'networking/Private_Link_Service.svg')
+        'microsoft.network/applicationgateways' = @('Application gateway', 'networking/Application_Gateways.svg')
+        'microsoft.network/dnsresolvers' = @('DNS Private Resolver', 'networking/DNS_Private_Resolver.svg')
+        'microsoft.network/networkvirtualappliances' = @('Network virtual appliance', '')
+    }
+    $key = ([string]$ResourceType).ToLowerInvariant()
+    if (-not $serviceTypes.ContainsKey($key)) { return $null }
+    return [pscustomobject]@{ Name = $serviceTypes[$key][0]; Icon = $serviceTypes[$key][1] }
+}
+
 function Get-AzureIconPath {
-    param([string]$Kind)
+    param([string]$Kind, [string]$ResourceType = '', [string]$ResourceId = '')
+    # Private endpoint targets and subnet services take their own type's icon where
+    # one exists; a target's type is known only from its ID.
+    if ($Kind -eq 'PrivateLinkTarget') { $ResourceType = Get-ResourceTypeFromId $ResourceId }
+    if ($Kind -eq 'PrivateLinkTarget' -or $Kind -eq 'SubnetOccupant') {
+        $service = Get-ServiceTypeInfo $ResourceType
+        if ($service -and $service.Icon) { return "img/lib/azure2/$($service.Icon)" }
+    }
+    # A new non-square icon also needs its proportions in Get-AzureIconSize.
     $icons = @{
         VNet='networking/Virtual_Networks.svg'; Subnet='networking/Subnet.svg'
         NIC='networking/Network_Interfaces.svg'; PublicIP='networking/Public_IP_Addresses.svg'
@@ -1860,14 +2176,79 @@ function Get-AzureIconPath {
     return 'img/lib/azure2/general/All_Resources.svg'
 }
 
+function Get-AzureIconSize {
+    param([string]$IconPath, [int]$BoxSize = 34)
+
+    # draw.io's label shape stretches its image to imageWidth x imageHeight, so each icon
+    # is fitted into the box at its own proportions. The width/height ratios were measured
+    # from draw.io's azure2 library; icons within 2% of square are omitted. A new icon that
+    # is missing here is drawn square, which distorts it but breaks nothing.
+    $aspectByIcon = @{
+        'ai_machine_learning/Cognitive_Services.svg' = 1.41
+        'ai_machine_learning/Machine_Learning.svg' = 0.93
+        'analytics/Azure_Databricks.svg' = 0.92
+        'analytics/Azure_Synapse_Analytics.svg' = 0.87
+        'analytics/Event_Hubs.svg' = 1.12
+        'app_services/API_Management_Services.svg' = 1.09
+        'app_services/Search_Services.svg' = 1.37
+        'compute/Disks.svg' = 1.03
+        'compute/Virtual_Machine.svg' = 1.08
+        'compute/Workspaces.svg' = 1.16
+        'containers/Container_Instances.svg' = 0.94
+        'containers/Container_Registries.svg' = 1.12
+        'containers/Kubernetes_Services.svg' = 1.14
+        'databases/Azure_Database_MySQL_Server.svg' = 0.75
+        'databases/Azure_Database_PostgreSQL_Server.svg' = 0.75
+        'databases/Azure_Purview_Accounts.svg' = 1.6
+        'databases/Cache_Redis.svg' = 1.23
+        'integration/App_Configuration.svg' = 0.93
+        'integration/Event_Grid_Domains.svg' = 1.12
+        'integration/Event_Grid_Topics.svg' = 1.12
+        'integration/Relays.svg' = 1.12
+        'integration/Service_Bus.svg' = 1.12
+        'management_governance/Azure_Arc.svg' = 1.34
+        'management_governance/Recovery_Services_Vaults.svg' = 1.15
+        'networking/Azure_Firewall_Policy.svg' = 1.38
+        'networking/Bastions.svg' = 0.86
+        'networking/DNS_Private_Resolver.svg' = 1.14
+        'networking/ExpressRoute_Circuits.svg' = 1.09
+        'networking/Firewalls.svg' = 1.18
+        'networking/Network_Interfaces.svg' = 1.13
+        'networking/Network_Security_Groups.svg' = 0.82
+        'networking/Private_Endpoint.svg' = 1.09
+        'networking/Private_Link_Service.svg' = 1.73
+        'networking/Private_Link.svg' = 1.08
+        'networking/Public_IP_Addresses.svg' = 1.24
+        'networking/Public_IP_Prefixes.svg' = 1.29
+        'networking/Route_Tables.svg' = 1.04
+        'networking/Subnet.svg' = 1.67
+        'networking/Virtual_Network_Gateways.svg' = 0.75
+        'networking/Virtual_Networks.svg' = 1.67
+        'other/Grafana.svg' = 1.29
+        'preview/Static_Apps.svg' = 1.24
+        'storage/Azure_NetApp_Files.svg' = 1.24
+        'storage/Storage_Accounts.svg' = 1.24
+        'storage/Storage_Sync_Services.svg' = 1.2
+    }
+    $key = $IconPath -replace '^img/lib/azure2/', ''
+    $aspect = if ($aspectByIcon.ContainsKey($key)) { [double]$aspectByIcon[$key] } else { 1.0 }
+    if ($aspect -ge 1) {
+        return [pscustomobject]@{ Width = $BoxSize; Height = [int][math]::Round($BoxSize / $aspect) }
+    }
+    return [pscustomobject]@{ Width = [int][math]::Round($BoxSize * $aspect); Height = $BoxSize }
+}
+
 function Get-AzureNodeStyle {
     param(
         [string]$Kind,
         [string]$FillColor = '#ffffff',
-        [string]$StrokeColor = '#0078d4'
+        [string]$StrokeColor = '#0078d4',
+        [string]$ResourceType = '',
+        [string]$ResourceId = ''
     )
-    $icon = Get-AzureIconPath $Kind
-    return "shape=label;rounded=1;whiteSpace=wrap;html=1;image=$icon;imageWidth=34;imageHeight=34;" +
+    $icon = Get-AzureIconPath $Kind $ResourceType $ResourceId
+    $iconSize = Get-AzureIconSize $icon
+    return "shape=label;rounded=1;whiteSpace=wrap;html=1;image=$icon;imageWidth=$($iconSize.Width);imageHeight=$($iconSize.Height);" +
            "imageAlign=left;imageVerticalAlign=middle;spacingLeft=44;align=left;verticalAlign=middle;" +
            "fillColor=$FillColor;strokeColor=$StrokeColor;fontSize=10;overflow=hidden;"
 }
@@ -1886,35 +2267,17 @@ function Get-FriendlyResourceType {
         RemoteVNet='Remote virtual network';GenericExternal='External endpoint'
         VpnSite='VPN site';VpnGateway='Virtual WAN VPN gateway';P2SVpnGateway='Point-to-site VPN gateway'
     }
+    # Types not known to Get-ServiceTypeInfo fall back to the raw resource type.
     if($Kind -eq 'PrivateLinkTarget'){
-        $id=ConvertTo-ResourceId $ResourceId
-        $targetTypes=@{
-            'microsoft.storage/storageaccounts'='Storage account';'microsoft.keyvault/vaults'='Key vault'
-            'microsoft.sql/servers'='Azure SQL server';'microsoft.web/sites'='App Service'
-            'microsoft.containerregistry/registries'='Container registry';'microsoft.servicebus/namespaces'='Service Bus namespace'
-            'microsoft.eventhub/namespaces'='Event Hubs namespace';'microsoft.documentdb/databaseaccounts'='Azure Cosmos DB account'
-        }
-        foreach($entry in $targetTypes.GetEnumerator()){if($id -like "*/providers/$($entry.Key)/*"){return [string]$entry.Value}}
+        $targetType=(Get-ResourceTypeFromId (ConvertTo-ResourceId $ResourceId)).ToLowerInvariant()
+        $service=Get-ServiceTypeInfo $targetType
+        if($service){return [string]$service.Name}
+        if($targetType){return $targetType}
         return 'Private Link target'
     }
     if($Kind -eq 'SubnetOccupant'){
-        $injectedTypes=@{
-            'microsoft.app/managedenvironments'='Container Apps environment'
-            'microsoft.web/serverfarms'='App Service plan';'microsoft.web/sites'='App Service'
-            'microsoft.dbforpostgresql/flexibleservers'='Azure Database for PostgreSQL flexible server'
-            'microsoft.dbformysql/flexibleservers'='Azure Database for MySQL flexible server'
-            'microsoft.apimanagement/service'='API Management service'
-            'microsoft.containerinstance/containergroups'='Container instance group'
-            'microsoft.databricks/workspaces'='Azure Databricks workspace'
-            'microsoft.netapp/netappaccounts'='Azure NetApp Files account'
-            'microsoft.containerservice/managedclusters'='AKS cluster'
-            'microsoft.network/privatelinkservices'='Private Link service'
-            'microsoft.network/dnsresolvers'='DNS Private Resolver'
-            'microsoft.network/networkvirtualappliances'='Network virtual appliance'
-            'microsoft.machinelearningservices/workspaces'='Azure Machine Learning workspace'
-        }
-        $normalizedType=([string]$ResourceType).ToLowerInvariant()
-        if($injectedTypes.ContainsKey($normalizedType)){return [string]$injectedTypes[$normalizedType]}
+        $service=Get-ServiceTypeInfo $ResourceType
+        if($service){return [string]$service.Name}
         if($ResourceType){return $ResourceType}
         return 'Subnet occupant'
     }
@@ -2001,7 +2364,9 @@ function Add-GraphEdge {
         [ValidateSet('Attachment','Security','Configuration','Peering','Hybrid')][string]$Kind = 'Attachment',
         [string]$AzureId = '',
         [string]$ResourceType = '',
-        [hashtable]$Attributes
+        [hashtable]$Attributes,
+        # Replaces the line and arrowhead style of the kind, such as a peering's arrowheads.
+        [string]$KindStyle = ''
     )
     $source = ConvertTo-ResourceId $SourceId
     $target = ConvertTo-ResourceId $TargetId
@@ -2022,7 +2387,7 @@ function Add-GraphEdge {
         }
         $Edges.Add([pscustomobject]@{
             Source=$source; Target=$target; Label=$Label; Kind=$Kind
-            AzureId=$normalizedAzureId; ResourceType=$ResourceType; Attributes=$edgeAttributes
+            AzureId=$normalizedAzureId; ResourceType=$ResourceType; Attributes=$edgeAttributes; KindStyle=$KindStyle
         })
     }
 }
@@ -2068,14 +2433,18 @@ function Get-PageConnectorStyle {
     )
     $base = 'edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;' +
             'jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;fontSize=9;'
-    $base += switch ($Edge.Kind) {
-        # NSG and routing links describe configuration, not traffic direction, so
-        # they carry no arrowhead.
-        'Security'      { 'dashed=1;dashPattern=6 4;strokeColor=#b8860b;endArrow=none;' }
-        'Configuration' { 'dashed=1;dashPattern=6 4;strokeColor=#6c8ebf;endArrow=none;' }
-        'Peering'       { 'dashed=1;dashPattern=8 4;strokeColor=#9673a6;strokeWidth=2;' }
-        'Hybrid'        { 'strokeColor=#9673a6;strokeWidth=2;' }
-        default         { 'strokeColor=#339966;' }
+    if ($Edge.KindStyle) {
+        $base += $Edge.KindStyle
+    } else {
+        $base += switch ($Edge.Kind) {
+            # NSG and routing links describe configuration, not traffic direction, so
+            # they carry no arrowhead.
+            'Security'      { 'dashed=1;dashPattern=6 4;strokeColor=#b8860b;endArrow=none;' }
+            'Configuration' { 'dashed=1;dashPattern=6 4;strokeColor=#6c8ebf;endArrow=none;' }
+            'Peering'       { 'dashed=1;dashPattern=8 4;strokeColor=#9673a6;strokeWidth=2;' }
+            'Hybrid'        { 'strokeColor=#9673a6;strokeWidth=2;' }
+            default         { 'strokeColor=#339966;' }
+        }
     }
 
     $sourceNode = if ($Nodes.ContainsKey($Edge.Source)) { $Nodes[$Edge.Source] } else { $null }
@@ -2128,7 +2497,7 @@ function Get-PageConnectorStyle {
         if ($sourceNode.SubnetId -and $targetNode.SubnetId -and $sourceNode.SubnetId -ne $targetNode.SubnetId) {
             return $base + 'exitX=1;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;'
         }
-        if ($sourceNode.Kind -eq 'VM' -and $targetNode.Kind -eq 'NIC') {
+        if (@('VM', 'PrivateEndpoint') -contains $sourceNode.Kind -and $targetNode.Kind -eq 'NIC') {
             return $base + 'exitX=0;exitY=0.5;exitPerimeter=1;entryX=1;entryY=0.5;entryPerimeter=1;'
         }
         return $base + 'exitX=1;exitY=0.5;exitPerimeter=1;entryX=0;entryY=0.5;entryPerimeter=1;'
@@ -2258,10 +2627,173 @@ function Add-PageLegend {
     param([System.Xml.XmlDocument]$Document, [System.Xml.XmlElement]$Root, [double]$Y, [double]$Width = 1320)
     $value = "<b>Legend</b><br><font color='#0078d4'>Azure icon</font> = Azure resource &nbsp; | &nbsp; " +
              "Contained = VNet/subnet membership &nbsp; | &nbsp; Solid line = attachment/backend &nbsp; | &nbsp; " +
-             "Dashed line = security/configuration/peering &nbsp; | &nbsp; Purple line = hybrid connectivity &nbsp; | &nbsp; Click a remote VNet to open its page"
+             "Dashed line = security/configuration/peering &nbsp; | &nbsp; Purple line = hybrid connectivity &nbsp; | &nbsp; Click a remote VNet to open its page" +
+             "<br>Arrowheads on peerings and connections = directions traffic may flow, detailed on the remote VNet for peerings; NSGs, routes, and firewalls are not evaluated &nbsp; | &nbsp; Red = not connected &nbsp; | &nbsp; No arrowheads = configuration, parts of a Virtual WAN hub, or state not reported"
     Add-MxVertex -Document $Document -Root $Root -Id 'legend' -Parent '1' -Value $value `
         -Style 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;' `
         -X 20 -Y $Y -Width $Width -Height 54
+}
+
+function Get-ExpressRouteCircuitDetail {
+    param([AllowNull()][object]$Circuit)
+
+    # Provider, location, bandwidth, and state, for the circuit's card.
+    if ($null -eq $Circuit) { return @() }
+    $bandwidth = [string](Get-ObjectValue $Circuit 'bandwidthMbps' '')
+    return @(
+        (Get-ObjectValue $Circuit 'serviceProvider' ''),
+        (Get-ObjectValue $Circuit 'peeringLocation' ''),
+        $(if ($bandwidth) { "$bandwidth Mbps" }),
+        (Get-ObjectValue $Circuit 'circuitState' '')
+    ) | Where-Object { $_ }
+}
+
+function Resolve-PrivateIpOwner {
+    param([object]$Index, [string]$Ip)
+
+    # Overlapping VNets can reuse an address, so an IP is only attributed when exactly one
+    # resource in the export holds it. Returns $null otherwise.
+    if (-not $Ip -or -not $Index.PrivateIpOwners.ContainsKey($Ip)) { return $null }
+    $owners = $Index.PrivateIpOwners[$Ip]
+    if ($owners.Count -ne 1) { return $null }
+    $ownerName = @($owners.Keys)[0]
+    return [pscustomobject]@{ Name = $ownerName; VnetId = [string]$owners[$ownerName] }
+}
+
+function Get-RouteDescription {
+    param([object]$Route, [object]$Index)
+
+    # Names the next hop the way a reader thinks of it. An appliance IP becomes the name of
+    # the resource holding it when that is unambiguous, otherwise it stays an IP.
+    $properties = Get-ObjectValue $Route 'properties' $Route
+    $prefix = [string](Get-ObjectValue $properties 'addressPrefix' '')
+    $type = [string](Get-ObjectValue $properties 'nextHopType' '')
+    $ip = [string](Get-ObjectValue $properties 'nextHopIpAddress' '')
+    $hop = switch ($type) {
+        'VirtualAppliance' {
+            $hopOwner = Resolve-PrivateIpOwner $Index $ip
+            if ($hopOwner) { $hopOwner.Name } elseif ($ip) { $ip } else { 'appliance' }
+        }
+        'VirtualNetworkGateway' { 'gateway' }
+        'VnetLocal' { 'VNet local' }
+        'Internet' { 'Internet' }
+        'None' { 'dropped' }
+        default { $type }
+    }
+    $technical = if ($ip) { "$type $ip" } else { $type }
+    return [pscustomobject]@{
+        Card = "$prefix &#8594; $hop"
+        Tooltip = "$([string](Get-ObjectValue $Route 'name' '')): $prefix $([char]0x2192) $hop ($technical)"
+    }
+}
+
+function Get-PeeringFlow {
+    param([object]$Index, [object]$Peering)
+
+    # Each side of a peering is its own resource with its own state and VNet access
+    # setting, and a side's setting governs traffic leaving its VNet. The way back needs
+    # the remote VNet's own peering, known only when that VNet is part of the export.
+    # Exports made before VNet access was collected count as allowed, Azure's default.
+    $localId = ConvertTo-ResourceId (Get-ObjectValue $Peering 'vnetId' '')
+    $remoteId = ConvertTo-ResourceId (Get-ObjectValue $Peering 'remoteVnetId' '')
+    $reverse = $null
+    foreach ($candidate in @($Index.PeeringsByVnetId[$remoteId] | Where-Object { $null -ne $_ })) {
+        if ((ConvertTo-ResourceId (Get-ObjectValue $candidate 'remoteVnetId' '')) -eq $localId) { $reverse = $candidate; break }
+    }
+    $localState = [string](Get-ObjectValue $Peering 'state' '')
+    $remoteState = if ($reverse) { [string](Get-ObjectValue $reverse 'state' '') } else { '' }
+    $connected = ($localState -eq 'Connected') -and ((-not $reverse) -or $remoteState -eq 'Connected')
+    $localAccess = ConvertTo-NullableBoolean (Get-ObjectValue $Peering 'allowVirtualNetworkAccess')
+    $remoteAccess = if ($reverse) { ConvertTo-NullableBoolean (Get-ObjectValue $reverse 'allowVirtualNetworkAccess') } else { $null }
+    $inbound = $false
+    if ($connected) { $inbound = if ($reverse) { $remoteAccess -ne $false } else { $null } }
+    $names = foreach ($id in @($localId, $remoteId)) {
+        if ($Index.VnetById.ContainsKey($id)) { [string](Get-ObjectValue $Index.VnetById[$id] 'name' (Get-ResourceNameFromId $id)) } else { Get-ResourceNameFromId $id }
+    }
+    $syncLevel = [string](Get-ObjectValue $Peering 'peeringSyncLevel' '')
+    return [pscustomobject]@{
+        LocalId = $localId; RemoteId = $remoteId; LocalName = $names[0]; RemoteName = $names[1]
+        HasReverse = $null -ne $reverse; RemoteInExport = $Index.VnetById.ContainsKey($remoteId)
+        LocalPeeringName = [string](Get-ObjectValue $Peering 'name' '')
+        RemotePeeringName = $(if ($reverse) { [string](Get-ObjectValue $reverse 'name' '') } else { '' })
+        LocalState = $localState; RemoteState = $remoteState; Connected = $connected
+        LocalAccess = $localAccess; RemoteAccess = $remoteAccess
+        Outbound = $connected -and $localAccess -ne $false; Inbound = $inbound
+        IsSubnetPeering = (ConvertTo-NullableBoolean (Get-ObjectValue $Peering 'peerCompleteVnets')) -eq $false
+        LocalSubnets = @(ConvertFrom-JsonCollection (Get-ObjectValue $Peering 'localSubnetNames' '') | ForEach-Object { [string]$_ } | Where-Object { $_ })
+        RemoteSubnets = @(ConvertFrom-JsonCollection (Get-ObjectValue $Peering 'remoteSubnetNames' '') | ForEach-Object { [string]$_ } | Where-Object { $_ })
+        LocalPrefixes = @(Get-PrefixList (Get-ObjectValue $Peering 'localPeeredAddressPrefixes' ''))
+        RemotePrefixes = @(Get-PrefixList (Get-ObjectValue $Peering 'peeredAddressPrefixes' ''))
+        SyncLevel = $syncLevel; IsOutOfSync = [bool]($syncLevel -and $syncLevel -ne 'FullyInSync')
+    }
+}
+
+function Get-PeeringFlowDescription {
+    param([object]$Flow)
+
+    # Plain-text lines for tooltips, naming both VNets so they read the same on the
+    # overview and on either VNet's page.
+    $arrow = [char]0x2192
+    $directions = @(
+        @{ Allowed = $Flow.Outbound; Access = $Flow.LocalAccess; From = $Flow.LocalName; To = $Flow.RemoteName },
+        @{ Allowed = $Flow.Inbound; Access = $Flow.RemoteAccess; From = $Flow.RemoteName; To = $Flow.LocalName }
+    )
+    $lines = @(foreach ($direction in $directions) {
+        $status = if (-not $Flow.Connected) {
+            'none, the peering is not connected'
+        } elseif ($null -eq $direction.Allowed) {
+            "not known, $($direction.From)'s side of the peering is not in this export"
+        } elseif ($direction.Allowed) {
+            if ($null -eq $direction.Access) { 'allowed (VNet access not collected)' } else { 'allowed' }
+        } else {
+            "blocked, VNet access is off on $($direction.From)'s side"
+        }
+        "Traffic $($direction.From) $arrow $($direction.To): $status"
+    })
+    $remoteSide = if ($Flow.HasReverse) { $Flow.RemoteState } elseif ($Flow.RemoteInExport) { 'no peering back' } else { 'not in this export' }
+    $lines += "State: $($Flow.LocalName) side $($Flow.LocalState), $($Flow.RemoteName) side $remoteSide"
+    # Each side names its own peering resource, and the two names are often unrelated.
+    $lines += "Peering name on $($Flow.LocalName)'s side: $($Flow.LocalPeeringName)"
+    if ($Flow.HasReverse) { $lines += "Peering name on $($Flow.RemoteName)'s side: $($Flow.RemotePeeringName)" }
+    if ($Flow.IsSubnetPeering) {
+        foreach ($side in @(@{ Name = $Flow.LocalName; Subnets = $Flow.LocalSubnets; Prefixes = $Flow.LocalPrefixes },
+                            @{ Name = $Flow.RemoteName; Subnets = $Flow.RemoteSubnets; Prefixes = $Flow.RemotePrefixes })) {
+            $subnets = if (@($side.Subnets).Count -gt 0) { @($side.Subnets) -join ', ' } else { 'not reported' }
+            $prefixes = if (@($side.Prefixes).Count -gt 0) { " ($(@($side.Prefixes) -join ', '))" } else { '' }
+            $lines += "Subnet peering, $($side.Name): $subnets$prefixes"
+        }
+    }
+    if ($Flow.IsOutOfSync) {
+        $lines += "Not in sync ($($Flow.SyncLevel)): an address space changed since the peering was last synced"
+    }
+    return $lines
+}
+
+function Get-PeeringLineStyle {
+    param([object]$Flow)
+
+    # Arrowheads point where the peering lets traffic go: at the target for traffic from
+    # the source VNet, at the source for traffic back. A peering that is not connected
+    # carries no traffic and is drawn red without arrowheads.
+    if (-not $Flow.Connected) {
+        return 'dashed=1;dashPattern=8 4;strokeColor=#b85450;strokeWidth=2;startArrow=none;endArrow=none;'
+    }
+    $start = if ($Flow.Inbound -eq $true) { 'startArrow=classic;startFill=1;' } else { 'startArrow=none;' }
+    $end = if ($Flow.Outbound) { 'endArrow=classic;endFill=1;' } else { 'endArrow=none;' }
+    return "dashed=1;dashPattern=8 4;strokeColor=#9673a6;strokeWidth=2;$start$end"
+}
+
+function Get-PeeringTrafficSummary {
+    param([object]$Flow)
+
+    # One card line, seen from the VNet whose page it is on. The tooltip names the VNets.
+    if (-not $Flow.Connected) { return "<font color='#b91c1c'>Traffic: none, not connected</font>" }
+    if ($Flow.Outbound -and $Flow.Inbound -eq $true) { return 'Traffic: both ways' }
+    if ($Flow.Outbound -and $Flow.Inbound -eq $false) { return 'Traffic: outbound only' }
+    if ($Flow.Outbound) { return 'Traffic: outbound, inbound unknown' }
+    if ($Flow.Inbound -eq $true) { return 'Traffic: inbound only' }
+    if ($Flow.Inbound -eq $false) { return "<font color='#b91c1c'>Traffic: none, access blocked</font>" }
+    return 'Traffic: outbound blocked, inbound unknown'
 }
 
 function New-EnhancedDrawIoPage {
@@ -2275,7 +2807,8 @@ function New-EnhancedDrawIoPage {
         [hashtable]$DetailPageIdByResourceId,
         [System.Collections.Generic.HashSet[string]]$UsedResourceIds,
         [ValidateRange(1,4)][int]$ResourcesPerRow,
-        [hashtable]$PlacedVnetIdsByResourceId
+        [hashtable]$PlacedVnetIdsByResourceId,
+        [string]$CollectedAt = ''
     )
 
     $vnetId = ConvertTo-ResourceId (Get-ObjectValue $Vnet 'id')
@@ -2296,7 +2829,7 @@ function New-EnhancedDrawIoPage {
     $null = $MxFile.AppendChild($diagram)
 
     $model = $Document.CreateElement('mxGraphModel')
-    foreach ($pair in ([ordered]@{dx='1422';dy='794';grid='1';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth='2100';pageHeight='1200';math='0';shadow='0'}).GetEnumerator()) {
+    foreach ($pair in ([ordered]@{dx='1422';dy='794';grid='0';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth='2100';pageHeight='1200';math='0';shadow='0'}).GetEnumerator()) {
         Set-XmlAttribute $model $pair.Key $pair.Value
     }
     Set-MxPageTheme $model
@@ -2309,7 +2842,8 @@ function New-EnhancedDrawIoPage {
         -Style 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;' `
         -X 20 -Y 15 -Width 220 -Height 30 -Attributes @{link='data:page/id,network-overview';tooltip='Open the network overview page'}
 
-    $subnets = @($Index.SubnetsByVnetId[$vnetId] | ForEach-Object { $_ })
+    # A VNet without subnets has no index entry, and piping that $null would draw one empty subnet.
+    $subnets = @($Index.SubnetsByVnetId[$vnetId] | Where-Object { $null -ne $_ })
     $subnetIds = @($subnets | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'id') })
     $subnetIdSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$subnetIds,[System.StringComparer]::OrdinalIgnoreCase)
     $nicRows = @(foreach ($subnetId in $subnetIds) { $Index.NicRowsBySubnetId[$subnetId] | ForEach-Object { $_ } })
@@ -2405,10 +2939,31 @@ function New-EnhancedDrawIoPage {
         $pe=$peGroup.Group[0]; $id=ConvertTo-ResourceId (Get-ObjectValue $pe 'id'); $name=[string](Get-ObjectValue $pe 'name' (Get-ResourceNameFromId $id)); $subnetId=ConvertTo-ResourceId (Get-ObjectValue $pe 'subnetId')
         $targets=@($peGroup.Group | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'targetId') } | Where-Object { $_ } | Sort-Object -Unique)
         $groups=ConvertTo-DisplayList (Get-ObjectValue $pe 'groupIds' '')
-        Add-GraphNode $nodes $UsedResourceIds $id $name PrivateEndpoint 'Microsoft.Network/privateEndpoints' "<b>$name</b><br>$groups<br><font color='#666666'>$(Get-ObjectValue $pe 'connectionState' '')</font>" Internal $subnetId
+        $connectionState=[string](Get-ObjectValue $pe 'connectionState' '')
+        # Captioned because a bare "blob" or "Approved" does not say what it is: the target
+        # sub-resource (groupIds) and the state of the connection to the target.
+        $peLines=@("<b>$name</b>")
+        if($groups){$peLines+="$(if($groups -like '*,*'){'Sub-resources'}else{'Sub-resource'}): $groups"}
+        if($connectionState){$peLines+="<font color='#666666'>Connection: $connectionState</font>"}
+        Add-GraphNode $nodes $UsedResourceIds $id $name PrivateEndpoint 'Microsoft.Network/privateEndpoints' ($peLines -join '<br>') Internal $subnetId
+        foreach ($nicId in @(Get-IdsFromJson (Get-ObjectValue $pe 'networkInterfaces' ''))) {
+            Add-GraphEdge $edges $edgeKeys $id $nicId 'uses NIC' Attachment
+        }
         foreach ($target in $targets) {
             $targetName=Get-ResourceNameFromId $target
-            Add-GraphNode $nodes $UsedResourceIds $target $targetName PrivateLinkTarget 'Azure linked resource' "<b>$targetName</b><br><font color='#666666'>Private Link target</font>" Connectivity
+            # The target is not queried, so where it lives is read from its ID; the
+            # subscription is named when it is part of this export. A bare subscription ID
+            # does not fit the node, and the full resource ID is in the tooltip anyway.
+            $targetScope=''
+            if ($target -match '^/subscriptions/([^/]+)/resourcegroups/([^/]+)/') {
+                $targetResourceGroup=$Matches[2]; $targetSubscriptionId=ConvertTo-ResourceId $Matches[1]; $targetSubscription='other subscription'
+                if ($Index.SubscriptionById.ContainsKey($targetSubscriptionId)) {
+                    $knownName=[string](Get-ObjectValue $Index.SubscriptionById[$targetSubscriptionId] 'subscriptionName' '')
+                    $targetSubscription=if ($knownName) { $knownName } else { $targetSubscriptionId }
+                }
+                $targetScope="<br><font color='#666666'>RG: $targetResourceGroup | $targetSubscription</font>"
+            }
+            Add-GraphNode $nodes $UsedResourceIds $target $targetName PrivateLinkTarget 'Azure linked resource' "<b>$targetName</b>$targetScope" Connectivity
             Add-GraphEdge $edges $edgeKeys $id $target 'private link' Attachment
         }
     }
@@ -2427,7 +2982,18 @@ function New-EnhancedDrawIoPage {
             $route=if($Index.RouteTableById.ContainsKey($routeId)){$Index.RouteTableById[$routeId]}else{$null}
             $name=if($route){[string](Get-ObjectValue $route 'name' (Get-ResourceNameFromId $routeId))}else{Get-ResourceNameFromId $routeId}; $count=if($route){[string](Get-ObjectValue $route 'routeCount' '?')}else{'?'}
             $attributes=@{};if($DetailPageIdByResourceId.ContainsKey($routeId)){$attributes.link="data:page/id,$($DetailPageIdByResourceId[$routeId])";$attributes.tooltip='Open route details'}
-            Add-GraphNode $nodes $UsedResourceIds $routeId $name RouteTable 'Microsoft.Network/routeTables' "<b>$name</b><br>Routes: $count<br><font color='#0078d4'>Open routes</font>" Security '' $attributes
+            # One or two routes, the common case, are spelled out on the card; longer tables
+            # keep the count. The hover text lists every route either way.
+            $routeDescriptions=@();if($route){$routeDescriptions=@(ConvertFrom-JsonCollection (Get-ObjectValue $route 'routes' '') | ForEach-Object { Get-RouteDescription $_ $Index })}
+            $routeSummary=if($routeDescriptions.Count -ge 1 -and $routeDescriptions.Count -le 2){($routeDescriptions|ForEach-Object{$_.Card}) -join '<br>'}else{"Routes: $count"}
+            if($route){
+                $shownRoutes=@($routeDescriptions|Select-Object -First 25|ForEach-Object{$_.Tooltip})
+                if($routeDescriptions.Count -gt 25){$shownRoutes+="... $($routeDescriptions.Count - 25) more on the route table page"}
+                $bgp=if((ConvertTo-NullableBoolean (Get-ObjectValue $route 'disableBgpRoutePropagation')) -eq $true){'off'}else{'on'}
+                $routeTooltip=@('Routes configured in this table, not the effective routes Azure applies:')+$shownRoutes+"BGP route propagation: $bgp"
+                $attributes.tooltip=(@(@($attributes['tooltip'])|Where-Object{$_})+$routeTooltip) -join "`n"
+            }
+            Add-GraphNode $nodes $UsedResourceIds $routeId $name RouteTable 'Microsoft.Network/routeTables' "<b>$name</b><br>$routeSummary<br><font color='#0078d4'>Open routes</font>" Security '' $attributes
             Add-GraphEdge $edges $edgeKeys $routeId $subnetId 'routes subnet' Configuration
         }
         $natId=ConvertTo-ResourceId (Get-ObjectValue $subnet 'natGatewayId')
@@ -2639,7 +3205,7 @@ function New-EnhancedDrawIoPage {
         if($circuitId){
             $circuit=if($circuitById.ContainsKey($circuitId)){$circuitById[$circuitId]}else{$null}
             $circuitName=if($circuit){[string](Get-ObjectValue $circuit 'name' (Get-ResourceNameFromId $circuitId))}else{Get-ResourceNameFromId $circuitId}
-            $circuitDetails=if($circuit){@((Get-ObjectValue $circuit 'serviceProvider' ''),(Get-ObjectValue $circuit 'peeringLocation' ''),$(if((Get-ObjectValue $circuit 'bandwidthMbps' '')){"$(Get-ObjectValue $circuit 'bandwidthMbps' '') Mbps"}),(Get-ObjectValue $circuit 'circuitState' ''))|Where-Object{$_}}else{@()}
+            $circuitDetails=@(Get-ExpressRouteCircuitDetail $circuit)
             Add-GraphNode $nodes $UsedResourceIds $circuitId $circuitName ExpressRouteCircuit 'Microsoft.Network/expressRouteCircuits' "<b>$circuitName</b><br>$($circuitDetails -join '<br>')" External
             $endpointIds.Add($circuitId)
         }
@@ -2650,7 +3216,8 @@ function New-EnhancedDrawIoPage {
             $endpointIds.Add($unresolvedId)
         }
         foreach($endpointId in $endpointIds){
-            Add-GraphEdge $edges $edgeKeys $localGatewayId $endpointId $connectionLabel Hybrid $connectionId 'Microsoft.Network/connections' @{tooltip=$connectionTooltip}
+            Add-GraphEdge $edges $edgeKeys $localGatewayId $endpointId $connectionLabel Hybrid $connectionId 'Microsoft.Network/connections' @{tooltip=$connectionTooltip} `
+                -KindStyle (Get-ConnectionLineStyle -Established (Test-ConnectionEstablished $connectionState))
         }
         $null=$renderedConnectionIds.Add($connectionId)
         $null=$UsedResourceIds.Add($connectionId)
@@ -2660,6 +3227,9 @@ function New-EnhancedDrawIoPage {
     # every spoke connected to the hub would otherwise repeat every branch.
     $maximumDrawnVpnSites = 5
     $vpnSiteIdsByCollapsedNodeId = @{}
+    # Gateways and firewalls are parts of the hub rather than paths with a direction, so
+    # their lines carry no arrowheads.
+    $hubComponentStyle = 'strokeColor=#9673a6;strokeWidth=2;startArrow=none;endArrow=none;'
     foreach ($hubConnection in @($Index.HubConnectionsByVnetId[$vnetId] | ForEach-Object { $_ })) {
         $connectionId = ConvertTo-ResourceId (Get-ObjectValue $hubConnection 'id')
         $hubId = ConvertTo-ResourceId (Get-ObjectValue $hubConnection 'virtualHubId')
@@ -2674,13 +3244,15 @@ function New-EnhancedDrawIoPage {
                 (Get-ObjectValue $hub 'provisioningState' '')
             ) | Where-Object { $_ }
         }
-        Add-GraphNode $nodes $UsedResourceIds $hubId $hubName VirtualHub 'Microsoft.Network/virtualHubs' `
-            "<b>$hubName</b><br>$($hubDetails -join '<br>')" External
         $connectionName = [string](Get-ObjectValue $hubConnection 'name' 'Virtual WAN connection')
         $connectionState = [string](Get-ObjectValue $hubConnection 'provisioningState' '')
         $connectionLabel = if ($connectionState) { "$connectionName | $connectionState" } else { $connectionName }
+        # The connection is named on the hub, not on its connector: connectors from the
+        # VNet share one trunk, where labels would pile up.
+        Add-GraphNode $nodes $UsedResourceIds $hubId $hubName VirtualHub 'Microsoft.Network/virtualHubs' `
+            "<b>$hubName</b><br>$((@($hubDetails) + "<font color='#666666'>Connection: $connectionLabel</font>") -join '<br>')" External
         Add-GraphEdge $edges $edgeKeys $vnetId $hubId $connectionLabel Hybrid $connectionId `
-            'Microsoft.Network/virtualHubs/hubVirtualNetworkConnections'
+            'Microsoft.Network/virtualHubs/hubVirtualNetworkConnections' -KindStyle (Get-ConnectionLineStyle -Established (Test-ConnectionEstablished $connectionState))
         if ($connectionId) {
             $null = $renderedConnectionIds.Add($connectionId)
             $null = $UsedResourceIds.Add($connectionId)
@@ -2692,7 +3264,25 @@ function New-EnhancedDrawIoPage {
             $gatewayDetails = if ($scaleUnits) { "Scale units: $scaleUnits" } else { '' }
             Add-GraphNode $nodes $UsedResourceIds $gatewayId $gatewayName ExpressRouteGateway `
                 'Microsoft.Network/expressRouteGateways' "<b>$gatewayName</b><br>$gatewayDetails" External
-            Add-GraphEdge $edges $edgeKeys $hubId $gatewayId 'ExpressRoute gateway' Hybrid
+            Add-GraphEdge $edges $edgeKeys $hubId $gatewayId 'ExpressRoute gateway' Hybrid -KindStyle $hubComponentStyle
+            # Each connection reaches a circuit through one of its peerings.
+            foreach ($expressRouteConnection in @($Index.ExpressRouteConnectionsByGatewayId[$gatewayId] | Where-Object { $null -ne $_ })) {
+                $circuitId = ConvertTo-ResourceId ([string](Get-ObjectValue $expressRouteConnection 'circuitPeeringId' '') -replace '/peerings/[^/]+$', '')
+                if (-not $circuitId) { continue }
+                $circuit = if ($Index.ExpressRouteCircuitById.ContainsKey($circuitId)) { $Index.ExpressRouteCircuitById[$circuitId] } else { $null }
+                $circuitName = if ($circuit) { [string](Get-ObjectValue $circuit 'name' (Get-ResourceNameFromId $circuitId)) } else { Get-ResourceNameFromId $circuitId }
+                $circuitDetails = @(Get-ExpressRouteCircuitDetail $circuit)
+                if (-not $circuit) { $circuitDetails = @("<font color='#666666'>Circuit not in this export</font>") }
+                Add-GraphNode $nodes $UsedResourceIds $circuitId $circuitName ExpressRouteCircuit 'Microsoft.Network/expressRouteCircuits' `
+                    "<b>$circuitName</b><br>$($circuitDetails -join '<br>')" External
+                $expressRouteConnectionName = [string](Get-ObjectValue $expressRouteConnection 'connectionName' 'ExpressRoute connection')
+                $expressRouteConnectionState = [string](Get-ObjectValue $expressRouteConnection 'connectionState' '')
+                $peeringName = [string](Get-ObjectValue $expressRouteConnection 'circuitPeeringId' '') -replace '^.*/peerings/', ''
+                $expressRouteConnectionLabel = if ($expressRouteConnectionState) { "$expressRouteConnectionName | $expressRouteConnectionState" } else { $expressRouteConnectionName }
+                Add-GraphEdge $edges $edgeKeys $gatewayId $circuitId $expressRouteConnectionLabel Hybrid "$gatewayId/expressrouteconnections/$(([string]$expressRouteConnectionName).ToLowerInvariant())" `
+                    'Microsoft.Network/expressRouteGateways/expressRouteConnections' @{ tooltip = "Connection: $expressRouteConnectionName`nCircuit peering: $peeringName`nState: $expressRouteConnectionState" } `
+                    -KindStyle (Get-ConnectionLineStyle -Established (Test-ConnectionEstablished $expressRouteConnectionState))
+            }
         }
         foreach ($firewallId in @($Index.FirewallIdsByHubId[$hubId] | ForEach-Object { $_ })) {
             if (-not $firewallId) { continue }
@@ -2703,7 +3293,7 @@ function New-EnhancedDrawIoPage {
             Add-GraphNode $nodes $UsedResourceIds $firewallId $firewallName Firewall 'Microsoft.Network/azureFirewalls' `
                 "<b>$firewallName</b><br>$($firewallDetails -join '<br>')" External '' `
                 (Get-FirewallPolicyLinkAttribute $firewallItem $DetailPageIdByResourceId)
-            Add-GraphEdge $edges $edgeKeys $hubId $firewallId 'hub firewall' Hybrid
+            Add-GraphEdge $edges $edgeKeys $hubId $firewallId 'hub firewall' Hybrid -KindStyle $hubComponentStyle
         }
         foreach ($p2sGateway in @($Index.P2sVpnGatewaysByHubId[$hubId] | Where-Object { $null -ne $_ })) {
             $p2sGatewayId = ConvertTo-ResourceId (Get-ObjectValue $p2sGateway 'id')
@@ -2718,7 +3308,7 @@ function New-EnhancedDrawIoPage {
             ) | Where-Object { $_ }
             Add-GraphNode $nodes $UsedResourceIds $p2sGatewayId $p2sGatewayName P2SVpnGateway 'Microsoft.Network/p2sVpnGateways' `
                 "<b>$p2sGatewayName</b><br>$(@($p2sDetails) -join '<br>')" External
-            Add-GraphEdge $edges $edgeKeys $hubId $p2sGatewayId 'point-to-site gateway' Hybrid
+            Add-GraphEdge $edges $edgeKeys $hubId $p2sGatewayId 'point-to-site gateway' Hybrid -KindStyle $hubComponentStyle
         }
         foreach ($vpnGateway in @($Index.VpnGatewaysByHubId[$hubId] | Where-Object { $null -ne $_ })) {
             $vpnGatewayId = [string]$vpnGateway.Id
@@ -2734,7 +3324,7 @@ function New-EnhancedDrawIoPage {
             ) | Where-Object { $_ }
             Add-GraphNode $nodes $UsedResourceIds $vpnGatewayId $vpnGatewayName VpnGateway 'Microsoft.Network/vpnGateways' `
                 "<b>$vpnGatewayName</b><br>$(@($vpnGatewayDetails) -join '<br>')" External
-            Add-GraphEdge $edges $edgeKeys $hubId $vpnGatewayId 'VPN gateway' Hybrid
+            Add-GraphEdge $edges $edgeKeys $hubId $vpnGatewayId 'VPN gateway' Hybrid -KindStyle $hubComponentStyle
 
             $vpnConnections = @($vpnGateway.Rows | Where-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'remoteVpnSiteId' '') })
             $siteIds = @($vpnConnections | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'remoteVpnSiteId' '') } | Sort-Object -Unique)
@@ -2751,7 +3341,23 @@ function New-EnhancedDrawIoPage {
                 Add-GraphNode $nodes $UsedResourceIds $collapsedId "$($siteIds.Count) VPN sites" VpnSite 'Microsoft.Network/vpnSites' `
                     "<b>$($siteIds.Count) VPN sites</b><br>$shownNames<br><font color='#666666'>Prefixes on the Network Ranges page</font>" External '' `
                     @{ tooltip = ($siteLines -join "`n") }
-                Add-GraphEdge $edges $edgeKeys $vpnGatewayId $collapsedId "$($vpnConnections.Count) connections" Hybrid
+                # One line stands for several connections: arrowheads when all are established,
+                # red when none is, and neither, with counts in the label, for any mix.
+                $results = @($vpnConnections | ForEach-Object { Test-ConnectionEstablished ([string](Get-ObjectValue $_ 'connectionStatus' '')) })
+                $downCount = @($results | Where-Object { $_ -eq $false }).Count
+                $unknownCount = @($results | Where-Object { $null -eq $_ }).Count
+                $summaryLabel = "$($vpnConnections.Count) connections"
+                if ($downCount -eq 0 -and $unknownCount -eq 0) {
+                    $summaryStyle = Get-ConnectionLineStyle -Established $true
+                } elseif ($downCount -eq $vpnConnections.Count) {
+                    $summaryStyle = Get-ConnectionLineStyle -Established $false
+                    $summaryLabel += ', none connected'
+                } else {
+                    $summaryStyle = Get-ConnectionLineStyle -Established $null
+                    if ($downCount -gt 0) { $summaryLabel += ", $downCount not connected" }
+                    if ($unknownCount -gt 0) { $summaryLabel += ", $unknownCount status not reported" }
+                }
+                Add-GraphEdge $edges $edgeKeys $vpnGatewayId $collapsedId $summaryLabel Hybrid -KindStyle $summaryStyle
                 $vpnSiteIdsByCollapsedNodeId[$collapsedId] = $siteIds
                 foreach ($siteId in $siteIds) { $null = $UsedResourceIds.Add($siteId) }
                 continue
@@ -2775,18 +3381,52 @@ function New-EnhancedDrawIoPage {
                 $vpnConnectionName = [string](Get-ObjectValue $vpnConnection 'connectionName' '')
                 if (-not $vpnConnectionName) { $vpnConnectionName = 'VPN connection' }
                 $vpnConnectionStatus = [string](Get-ObjectValue $vpnConnection 'connectionStatus' '')
-                $vpnConnectionLabel = if ($vpnConnectionStatus) { "$vpnConnectionName | $vpnConnectionStatus" } else { $vpnConnectionName }
+                $vpnConnectionStatusText = if ($vpnConnectionStatus) { $vpnConnectionStatus } else { 'status not reported' }
+                $vpnConnectionLabel = "$vpnConnectionName | $vpnConnectionStatusText"
                 Add-GraphEdge $edges $edgeKeys $vpnGatewayId $siteId $vpnConnectionLabel Hybrid '' '' `
-                    @{ tooltip = "Connection: $vpnConnectionName`nStatus: $vpnConnectionStatus" }
+                    @{ tooltip = "Connection: $vpnConnectionName`nStatus: $(if ($vpnConnectionStatus) { $vpnConnectionStatus } else { 'not reported by Azure for this connection' })" } `
+                    -KindStyle (Get-ConnectionLineStyle -Established (Test-ConnectionEstablished $vpnConnectionStatus))
             }
         }
     }
 
+    # Local subnets taking part in a subnet peering, named in their subnet header.
+    $subnetPeeringsBySubnetName = @{}
     foreach($peering in @($Index.PeeringsByVnetId[$vnetId] | ForEach-Object { $_ })){
-        $remoteId=ConvertTo-ResourceId (Get-ObjectValue $peering 'remoteVnetId');if(-not $remoteId){continue};$remoteVnet=if($Index.VnetById.ContainsKey($remoteId)){$Index.VnetById[$remoteId]}else{$null};$remoteName=if($remoteVnet){[string](Get-ObjectValue $remoteVnet 'name' (Get-ResourceNameFromId $remoteId))}else{Get-ResourceNameFromId $remoteId};$state=[string](Get-ObjectValue $peering 'state' '')
-        $attributes=@{tooltip="Remote VNet: $remoteName`nState: $state"};if($PageIdByVnetId.ContainsKey($remoteId)){$attributes.link="data:page/id,$($PageIdByVnetId[$remoteId])"}
-        Add-GraphNode $nodes $UsedResourceIds $remoteId $remoteName RemoteVNet 'Microsoft.Network/virtualNetworks' "<b>$remoteName</b><br>Peering: $state<br><font color='#0078d4'>Open VNet page</font>" External '' $attributes
-        Add-GraphEdge $edges $edgeKeys $vnetId $remoteId ([string](Get-ObjectValue $peering 'name' 'peering')) Peering
+        $remoteId=ConvertTo-ResourceId (Get-ObjectValue $peering 'remoteVnetId');if(-not $remoteId){continue}
+        # The peering to a Virtual WAN hub's managed VNet is the hub connection drawn above.
+        if(Test-HubManagedPeering $Index $peering){continue}
+        $flow=Get-PeeringFlow $Index $peering;$remoteName=$flow.RemoteName
+        # Each side of a peering has its own settings; these are this VNet's side, so the
+        # card says so rather than suggest they belong to the remote VNet it is drawn on.
+        $forwarded=(ConvertTo-NullableBoolean (Get-ObjectValue $peering 'allowForwardedTraffic')) -eq $true
+        $gatewayTransit=(ConvertTo-NullableBoolean (Get-ObjectValue $peering 'allowGatewayTransit')) -eq $true
+        $useRemoteGateways=(ConvertTo-NullableBoolean (Get-ObjectValue $peering 'useRemoteGateways')) -eq $true
+        $settings=@()
+        # Short words keep the line from wrapping; gateway transit and remote gateway use
+        # never occur on the same side. The tooltip spells the settings out.
+        if($forwarded){$settings+='forwarding'}
+        if($gatewayTransit){$settings+='gateway transit'}
+        if($useRemoteGateways){$settings+='remote gateway'}
+        $settingsLine=if($settings.Count -gt 0){"This side: $($settings -join ' &#183; ')"}else{'This side: no forwarding or gateway'}
+        $accessText=if($flow.LocalAccess -eq $false){'no'}elseif($flow.LocalAccess -eq $true){'yes'}else{'not collected'}
+        $settingsTooltip=@("Settings on $($flow.LocalName)'s side:","VNet access: $accessText","Forwarded traffic: $(if($forwarded){'yes'}else{'no'})","Gateway transit: $(if($gatewayTransit){'yes'}else{'no'})","Uses remote gateway: $(if($useRemoteGateways){'yes'}else{'no'})")
+        $peeringName=[string](Get-ObjectValue $peering 'name' 'peering')
+        $flowLines=@(Get-PeeringFlowDescription $flow)
+        $attributes=@{tooltip=(@("Remote VNet: $remoteName")+$flowLines+$settingsTooltip) -join "`n"};if($PageIdByVnetId.ContainsKey($remoteId)){$attributes.link="data:page/id,$($PageIdByVnetId[$remoteId])"}
+        # The card has room for one line of name; a longer one is cut, and the tooltip has it in full.
+        $cardPeeringName=if($peeringName.Length -gt 24){"$($peeringName.Substring(0,23))&#8230;"}else{$peeringName}
+        $stateText=if($flow.Connected){'Connected'}elseif($flow.HasReverse -and $flow.RemoteState -ne $flow.LocalState){"$($flow.LocalState) / $($flow.RemoteState)"}else{$flow.LocalState}
+        if($flow.IsSubnetPeering){$stateText+=' (subnet)'}
+        $peeringLine="Peering: $stateText";if($flow.IsOutOfSync){$peeringLine+=" &#183; <font color='#b91c1c'>not in sync</font>"}
+        $pageHint=if($attributes.ContainsKey('link')){"<br><font color='#0078d4'>Open VNet page</font>"}else{''}
+        Add-GraphNode $nodes $UsedResourceIds $remoteId $remoteName RemoteVNet 'Microsoft.Network/virtualNetworks' "<b>$remoteName</b><br>$peeringLine<br><font color='#666666'>Peering name: $cardPeeringName</font><br>$(Get-PeeringTrafficSummary $flow)<br>$settingsLine$pageHint" External '' $attributes
+        Add-GraphEdge -Edges $edges -EdgeKeys $edgeKeys -SourceId $vnetId -TargetId $remoteId -Label $peeringName -Kind Peering `
+            -Attributes @{tooltip=($flowLines -join "`n")} -KindStyle (Get-PeeringLineStyle $flow)
+        if($flow.IsSubnetPeering){
+            $remoteSubnets=if(@($flow.RemoteSubnets).Count -gt 0){" ($(@($flow.RemoteSubnets) -join ', '))"}else{''}
+            foreach($subnetName in $flow.LocalSubnets){Add-IndexValue $subnetPeeringsBySubnetName $subnetName "$remoteName$remoteSubnets"}
+        }
     }
 
     # The subnet's own ipConfigurations and service association links name every
@@ -2852,7 +3492,8 @@ function New-EnhancedDrawIoPage {
     $externalNodes = @($nodes.Values | Where-Object { $_.Lane -eq 'External' } | Sort-Object Kind, Name)
 
     # Build explicit resource rows. A NIC and its VM are treated as a unit when
-    # space permits; private endpoints always receive a dedicated row.
+    # space permits; private endpoints always receive a dedicated row, shared
+    # with their NIC.
     $internalRowsBySubnetId = @{}
     $internalRowIndexByNodeId = @{}
     foreach ($subnet in $subnets) {
@@ -2861,7 +3502,19 @@ function New-EnhancedDrawIoPage {
         $usedInternalIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $units = [System.Collections.Generic.List[object]]::new()
 
+        $nicNodesByEndpointId = @{}
+        $endpointNicIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($edge in @($edges | Where-Object Label -eq 'uses NIC')) {
+            $sourceNode = $nodes[$edge.Source]; $targetNode = $nodes[$edge.Target]
+            if ($sourceNode -and $targetNode -and $sourceNode.Kind -eq 'PrivateEndpoint' -and $targetNode.Kind -eq 'NIC' -and
+                $sourceNode.SubnetId -eq $sid -and $targetNode.SubnetId -eq $sid) {
+                Add-IndexValue $nicNodesByEndpointId $sourceNode.Id $targetNode
+                $null = $endpointNicIds.Add($targetNode.Id)
+            }
+        }
+
         foreach ($nic in @($internal | Where-Object Kind -eq 'NIC' | Sort-Object Name)) {
+            if ($endpointNicIds.Contains($nic.Id)) { continue }
             $items = [System.Collections.Generic.List[object]]::new()
             $items.Add($nic); $null = $usedInternalIds.Add($nic.Id)
             foreach ($vm in @($internal | Where-Object Kind -eq 'VM' | Where-Object {
@@ -2879,7 +3532,16 @@ function New-EnhancedDrawIoPage {
         }
         foreach ($endpoint in @($internal | Where-Object Kind -eq 'PrivateEndpoint' | Sort-Object Name)) {
             if ($usedInternalIds.Add($endpoint.Id)) {
-                $units.Add([pscustomobject]@{Items=@($endpoint);OwnRow=$true})
+                # The NIC goes first so the private link connector leaves the
+                # endpoint toward the connectivity lane without crossing the NIC.
+                $items = [System.Collections.Generic.List[object]]::new()
+                if ($nicNodesByEndpointId.ContainsKey($endpoint.Id)) {
+                    foreach ($nic in @($nicNodesByEndpointId[$endpoint.Id] | Sort-Object Name)) {
+                        if ($usedInternalIds.Add($nic.Id)) { $items.Add($nic) }
+                    }
+                }
+                $items.Add($endpoint)
+                $units.Add([pscustomobject]@{Items=@($items);OwnRow=$true})
             }
         }
         foreach ($node in @($internal | Sort-Object Kind, Name)) {
@@ -2897,7 +3559,11 @@ function New-EnhancedDrawIoPage {
                     $rows.Add([pscustomobject]@{Items=@($currentItems)})
                     $currentItems = [System.Collections.Generic.List[object]]::new()
                 }
-                $rows.Add([pscustomobject]@{Items=$unitItems})
+                # A dedicated unit wider than -ResourcesPerRow continues on the next row.
+                for ($start = 0; $start -lt $unitItems.Count; $start += $ResourcesPerRow) {
+                    $end = [math]::Min($start + $ResourcesPerRow, $unitItems.Count) - 1
+                    $rows.Add([pscustomobject]@{Items=@($unitItems[$start..$end])})
+                }
                 continue
             }
             if ($currentItems.Count -gt 0 -and ($currentItems.Count + $unitItems.Count) -gt $ResourcesPerRow) {
@@ -2929,7 +3595,7 @@ function New-EnhancedDrawIoPage {
             if (-not $adjacentNodeIds[$pair[0]].Contains($pair[1])) { $adjacentNodeIds[$pair[0]].Add($pair[1]) }
         }
     }
-    $preferredRowByNodeId = @{}
+    $preferredRowByNodeId = @{}; $placementRankByNodeId = @{}
     foreach ($sideNode in @($securityNodes + $connectivityNodes + $externalNodes)) {
         if (-not $anchorByNodeId.ContainsKey($sideNode.Id)) { continue }
         $anchor = $anchorByNodeId[$sideNode.Id]
@@ -2951,6 +3617,10 @@ function New-EnhancedDrawIoPage {
             $frontier = $next
         }
         $preferredRowByNodeId[$sideNode.Id] = if ($matchedRows.Count -gt 0) { ($matchedRows | Measure-Object -Minimum).Minimum } else { 0 }
+        # Nodes claim rows closest link first: one linked directly to a single row, such as a
+        # private endpoint's target or a NIC's public IP, before one linked to several rows,
+        # one reached only through other nodes, and one tied to the whole subnet.
+        $placementRankByNodeId[$sideNode.Id] = if ($matchedRows.Count -gt 0) { (($depth - 1) * 1000) + @($matchedRows | Sort-Object -Unique).Count } else { [int]::MaxValue }
     }
 
     # Gateways connect from inside GatewaySubnet to nodes in the remote lane.
@@ -3005,7 +3675,9 @@ function New-EnhancedDrawIoPage {
             $placements = [System.Collections.Generic.List[object]]::new()
             $occupiedSlots = [System.Collections.Generic.HashSet[int]]::new()
             foreach ($reservedSlot in $placementDefinition.Reserved) { $null = $occupiedSlots.Add([int]$reservedSlot) }
-            $anchoredNodes = @($placementDefinition.Nodes | Where-Object { $anchorByNodeId[$_.Id] -eq $sid } | Sort-Object @{Expression={ if ($preferredRowByNodeId.ContainsKey($_.Id)) { $preferredRowByNodeId[$_.Id] } else { 0 } }}, Kind, Name)
+            $anchoredNodes = @($placementDefinition.Nodes | Where-Object { $anchorByNodeId[$_.Id] -eq $sid } |
+                Sort-Object @{Expression={ if ($placementRankByNodeId.ContainsKey($_.Id)) { $placementRankByNodeId[$_.Id] } else { [int]::MaxValue } }},
+                    @{Expression={ if ($preferredRowByNodeId.ContainsKey($_.Id)) { $preferredRowByNodeId[$_.Id] } else { 0 } }}, Kind, Name)
             foreach ($node in $anchoredNodes) {
                 $slot = if ($preferredRowByNodeId.ContainsKey($node.Id)) { [int]$preferredRowByNodeId[$node.Id] } else { 0 }
                 while ($occupiedSlots.Contains($slot)) { $slot++ }
@@ -3060,19 +3732,46 @@ function New-EnhancedDrawIoPage {
     $unanchoredSecurity = @($securityNodes | Where-Object { -not $anchorByNodeId.ContainsKey($_.Id) })
     $unanchoredConnectivity = @($connectivityNodes | Where-Object { -not $anchorByNodeId.ContainsKey($_.Id) })
     $unanchoredExternal = @(Get-ExternalLaneOrder -Nodes @($externalNodes | Where-Object { -not $anchorByNodeId.ContainsKey($_.Id) }) -Edges $edges)
-    $maximumUnanchoredCount=[math]::Max($unanchoredSecurity.Count,[math]::Max($unanchoredConnectivity.Count,$unanchoredExternal.Count))
+    $vnetX = 280; $vnetY = 60; $vnetWidth = 950
+    $vnetHeight = [math]::Max(250, $currentY + 5)
+
+    # Remote and hybrid resources not tied to a subnet first fill the free rows of their
+    # lane beside the VNet, top down and around the rows subnet-bound nodes occupy, so a
+    # large VNet does not also grow a long tail below it. Only what does not fit continues
+    # below the VNet. Values are lane-relative y.
+    $occupiedExternalRows = @(foreach ($layout in $layouts) {
+        foreach ($placement in @($externalPlacementsBySubnetId[$layout.Id])) {
+            $layout.Y + $subnetHeaderHeight + 10 + ($placement.Slot * $resourceRowPitch)
+        }
+    })
+    $besideExternalYById = @{}
+    $belowExternal = [System.Collections.Generic.List[object]]::new()
+    $candidateY = 48
+    foreach ($node in $unanchoredExternal) {
+        if ($belowExternal.Count -eq 0) {
+            do {
+                $overlaps = @($occupiedExternalRows | Where-Object { $candidateY -lt $_ + $resourceRowPitch -and $_ -lt $candidateY + $resourceRowPitch })
+                if ($overlaps.Count -gt 0) { $candidateY = ($overlaps | Measure-Object -Maximum).Maximum + $resourceRowPitch }
+            } while ($overlaps.Count -gt 0)
+            if ($candidateY + $resourceNodeHeight -le $vnetHeight) {
+                $besideExternalYById[$node.Id] = $candidateY
+                $candidateY += $resourceRowPitch
+                continue
+            }
+        }
+        $belowExternal.Add($node)
+    }
+    $maximumUnanchoredCount=[math]::Max($unanchoredSecurity.Count,[math]::Max($unanchoredConnectivity.Count,$belowExternal.Count))
     $unanchoredHeight = if ($maximumUnanchoredCount -gt 0) {
         55 + ($maximumUnanchoredCount * $resourceRowPitch)
     } else { 0 }
-    $vnetX = 280; $vnetY = 60; $vnetWidth = 950
-    $vnetHeight = [math]::Max(250, $currentY + 5)
     $laneHeight = $vnetHeight + $unanchoredHeight
 
     $attachedResourceCount=@($nodes.Values|Where-Object{$_.Kind -notin @('RemoteVNet','PrivateLinkTarget')}).Count
     $publicIpCount=@($nodes.Values|Where-Object Kind -eq 'PublicIP').Count
     $nsgCount=@($nodes.Values|Where-Object Kind -eq 'NSG').Count
     # A VNet without peerings has no index entry, and @($null) would count as one.
-    $peeringCount=@($Index.PeeringsByVnetId[$vnetId] | Where-Object { $_ -and (Get-ObjectValue $_ 'remoteVnetId' '') }).Count
+    $peeringCount=@($Index.PeeringsByVnetId[$vnetId] | Where-Object { $_ -and (Get-ObjectValue $_ 'remoteVnetId' '') -and -not (Test-HubManagedPeering $Index $_) }).Count
     $hybridResourceIds=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach($node in $nodes.Values|Where-Object{$_.Kind -in @('Gateway','RemoteGateway','LocalNetworkGateway','ExpressRouteCircuit','ExpressRouteGateway','VirtualHub','VpnGateway','P2SVpnGateway','VpnSite')}){
         # A summary node stands for several VPN sites, so count the sites it replaces.
@@ -3082,6 +3781,8 @@ function New-EnhancedDrawIoPage {
     $hybridCount=$hybridResourceIds.Count
     $bastionCount=@($nodes.Values|Where-Object Kind -eq 'Bastion').Count
     $summary="<b>VNet inventory</b> &nbsp; Subnets: $($subnets.Count) &nbsp; | &nbsp; Attached resources: $attachedResourceCount &nbsp; | &nbsp; Public IPs: $publicIpCount &nbsp; | &nbsp; NSGs: $nsgCount &nbsp; | &nbsp; Peerings: $peeringCount &nbsp; | &nbsp; Hybrid: $hybridCount &nbsp; | &nbsp; Bastion: $bastionCount"
+    # Repeated from the overview so a single page exported on its own still carries the date.
+    if($CollectedAt){$summary+=" &nbsp; | &nbsp; Data collected $CollectedAt"}
     Add-MxVertex $Document $root 'vnet-summary' '1' $summary `
         'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;' `
         260 15 1580 30
@@ -3119,6 +3820,7 @@ function New-EnhancedDrawIoPage {
         $routeTableName = if($routeTableResourceId){Get-ResourceNameFromId $routeTableResourceId}else{'None'}
         $natGatewayName = if($natGatewayResourceId){Get-ResourceNameFromId $natGatewayResourceId}else{'None'}
         $delegationNames = Get-JsonPropertyList (Get-ObjectValue $subnet 'delegations' '') 'properties.serviceName'
+        $isDelegated = [bool]$delegationNames
         $serviceEndpointNames = Get-JsonPropertyList (Get-ObjectValue $subnet 'serviceEndpoints' '') 'service'
         if(-not$delegationNames){$delegationNames='None'};if(-not$serviceEndpointNames){$serviceEndpointNames='None'}
         # Stated positively so an empty subnet is distinguishable from a gap in
@@ -3129,6 +3831,13 @@ function New-EnhancedDrawIoPage {
             # Data exported before subnet references were collected.
             $occupancyText = 'not reported'
             $occupancyColor = '#999999'
+        } elseif ($occupants.Count -eq 0 -and $isDelegated) {
+            # A delegated service such as AKS virtual nodes or Application Gateway for
+            # Containers can use the subnet without the subnet referencing it, so "none"
+            # would wrongly suggest an unused subnet. Matches "Service-managed" on the
+            # Network Ranges page.
+            $occupancyText = 'service-managed (delegated) - Azure reports no resource here'
+            $occupancyColor = '#666666'
         } elseif ($occupants.Count -eq 0) {
             $occupancyText = 'none - no resource references this subnet'
             $occupancyColor = '#107c10'
@@ -3144,6 +3853,11 @@ function New-EnhancedDrawIoPage {
                  "<br><font color='#555555'><b>Delegation:</b> $delegationNames &nbsp; | &nbsp; <b>Service endpoints:</b> $serviceEndpointNames</font>" +
                  "<br><font color='#666666'><b>PE policies:</b> $pePolicies &nbsp; | &nbsp; <b>PLS policies:</b> $plsPolicies</font>" +
                  "<br><font color='$occupancyColor'><b>Occupants:</b> $occupancyText</font>"
+        # A subnet peering reaches only the subnets it names, so they are marked here.
+        $subnetName = [string](Get-ObjectValue $subnet 'name' '')
+        if ($subnetName -and $subnetPeeringsBySubnetName.ContainsKey($subnetName)) {
+            $label += "<br><font color='#666666'><b>Subnet peering:</b> $(@($subnetPeeringsBySubnetName[$subnetName]) -join ', ')</font>"
+        }
         Add-MxVertex $Document $root $cell 'vnet' $label `
             "swimlane;html=1;rounded=1;collapsible=1;startSize=$subnetHeaderHeight;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=10;align=left;spacingLeft=8;" `
             $layout.X $layout.Y $layout.Width $layout.Height $sid 'Microsoft.Network/virtualNetworks/subnets' `
@@ -3158,7 +3872,7 @@ function New-EnhancedDrawIoPage {
             for ($columnIndex = 0; $columnIndex -lt $rowItems.Count; $columnIndex++) {
                 $node = $rowItems[$columnIndex]; $resourceNumber++; $node.CellId = "resource-$resourceNumber"
                 $x = $rowLeft + ($columnIndex * ($resourceWidth + $rowGap)); $y = $subnetHeaderHeight + 10 + ($rowIndex * $resourceRowPitch)
-                Add-MxVertex $Document $root $node.CellId $cell $node.Label (Get-AzureNodeStyle $node.Kind) `
+                Add-MxVertex $Document $root $node.CellId $cell $node.Label (Get-AzureNodeStyle $node.Kind -ResourceType $node.ResourceType -ResourceId $node.Id) `
                     $x $y $resourceWidth $resourceNodeHeight $node.Id $node.ResourceType $node.Attributes
             }
         }
@@ -3179,7 +3893,7 @@ function New-EnhancedDrawIoPage {
             $node = $placement.Node
             $connectivityNumber++; $node.CellId = "connectivity-$connectivityNumber"
             Add-MxVertex $Document $root $node.CellId 'connectivity-lane' $node.Label `
-                (Get-AzureNodeStyle $node.Kind '#ffffff' '#82b366') 12 ($sideY + ($placement.Slot * $resourceRowPitch)) 226 $resourceNodeHeight `
+                (Get-AzureNodeStyle $node.Kind '#ffffff' '#82b366' $node.ResourceType $node.Id) 12 ($sideY + ($placement.Slot * $resourceRowPitch)) 226 $resourceNodeHeight `
                 $node.Id $node.ResourceType $node.Attributes
         }
         foreach ($placement in @($externalPlacementsBySubnetId[$layout.Id])) {
@@ -3203,17 +3917,23 @@ function New-EnhancedDrawIoPage {
     foreach ($node in $unanchoredConnectivity) {
         $connectivityNumber++; $node.CellId = "connectivity-$connectivityNumber"
         Add-MxVertex $Document $root $node.CellId 'connectivity-lane' $node.Label `
-            (Get-AzureNodeStyle $node.Kind '#ffffff' '#82b366') 12 ($unanchoredY + ($i * $resourceRowPitch)) 226 $resourceNodeHeight `
+            (Get-AzureNodeStyle $node.Kind '#ffffff' '#82b366' $node.ResourceType $node.Id) 12 ($unanchoredY + ($i * $resourceRowPitch)) 226 $resourceNodeHeight `
             $node.Id $node.ResourceType $node.Attributes
         $i++
     }
     $i = 0
+    $unanchoredExternalCenterYById = @{}
     foreach ($node in $unanchoredExternal) {
         $externalNumber++; $node.CellId = "external-$externalNumber"
+        if ($besideExternalYById.ContainsKey($node.Id)) {
+            $nodeY = $besideExternalYById[$node.Id]
+        } else {
+            $nodeY = $unanchoredY + ($i * $resourceRowPitch); $i++
+        }
         Add-MxVertex $Document $root $node.CellId 'external-lane' $node.Label `
-            (Get-AzureNodeStyle $node.Kind '#ffffff' '#9673a6') 12 ($unanchoredY + ($i * $resourceRowPitch)) 256 $resourceNodeHeight `
+            (Get-AzureNodeStyle $node.Kind '#ffffff' '#9673a6') 12 $nodeY 256 $resourceNodeHeight `
             $node.Id $node.ResourceType $node.Attributes
-        $i++
+        $unanchoredExternalCenterYById[$node.Id] = $vnetY + $nodeY + ($resourceNodeHeight / 2)
     }
 
     $cellById = @{$vnetId='vnet'}
@@ -3222,25 +3942,53 @@ function New-EnhancedDrawIoPage {
     $renderableEdges = @($edges | Where-Object { $cellById.ContainsKey($_.Source) -and $cellById.ContainsKey($_.Target) })
     $layerIdByKind = Add-MxPageLayer $Document $root $baseCell `
         @($renderableEdges | ForEach-Object { [string]$_.Kind } | Sort-Object -Unique)
-    $edgeNumber = 0; $connectorUseCount = @{}
+    $edgeNumber = 0; $connectorUseCount = @{}; $externalOverhang = 0
     foreach ($edge in $renderableEdges) {
         $edgeNumber++
         $style = Get-PageConnectorStyle -Edge $edge -Nodes $nodes -SubnetIds $subnetIds -VnetId $vnetId
         $channelKey = "$($edge.Source)|$($edge.Kind)"
         $channelNumber = if ($connectorUseCount.ContainsKey($channelKey)) { [int]$connectorUseCount[$channelKey] } else { 0 }
         $connectorUseCount[$channelKey] = $channelNumber + 1
-        $style += "jettySize=$([math]::Min(84, 20 + ($channelNumber * 8)));"
-        # A label cannot fit cleanly in the small gap between a paired VM and
-        # NIC. Their placement and connector already make the relationship
-        # clear, so keep this short attachment line intentionally unlabeled.
-        $displayLabel = if ($edge.Label -eq 'uses NIC') { '' } else { $edge.Label }
+        $jettySize = [math]::Min(84, 20 + ($channelNumber * 8))
+        $style += "jettySize=$jettySize;"
+        # A label cannot fit cleanly in the small gap between a NIC and its paired
+        # VM or private endpoint. Their placement and connector already make the
+        # relationship clear, so keep this short attachment line intentionally unlabeled.
+        # Peerings and hub connections from the VNet are named on their target node.
+        $fromVnetToRemote = $edge.Source -eq $vnetId -and $nodes.ContainsKey($edge.Target) -and $nodes[$edge.Target].Lane -eq 'External'
+        $displayLabel = if ($edge.Label -eq 'uses NIC' -or $fromVnetToRemote) { '' } else { $edge.Label }
+        $points = @()
+        if ($fromVnetToRemote -and $unanchoredExternalCenterYById.ContainsKey($edge.Target)) {
+            # Leave through the VNet's right edge near the top, where the connectivity lane is
+            # always empty (below its header, above the first subnet's rows at 216), cross
+            # it there, and run down the gap between the connectivity and remote lanes to the
+            # target, whether beside the VNet or below it. Connectors of one kind share this
+            # trunk, so it stays clear of every node however many targets there are.
+            $trunk = if ($edge.Kind -eq 'Hybrid') { 1 } else { 0 }
+            $bandY = $vnetY + 58 + ($trunk * 12)
+            $gapX = $externalX - 14 - ($trunk * 12)
+            $style = ($style -replace 'edgeStyle=orthogonalEdgeStyle;', 'edgeStyle=none;') `
+                -replace 'exitX=[^;]*;exitY=[^;]*;', "exitX=1;exitY=$([math]::Round(($bandY - $vnetY) / $vnetHeight, 4));"
+            $points = @(
+                [pscustomobject]@{ X = $gapX; Y = $bandY },
+                [pscustomobject]@{ X = $gapX; Y = $unanchoredExternalCenterYById[$edge.Target] }
+            )
+        }
+        # Connectors between two remote/hybrid nodes run beyond the nodes' right edge,
+        # with their label centred on that run; the page must be wide enough for both.
+        if ($nodes.ContainsKey($edge.Source) -and $nodes.ContainsKey($edge.Target) -and
+            $nodes[$edge.Source].Lane -eq 'External' -and $nodes[$edge.Target].Lane -eq 'External') {
+            $externalOverhang = [math]::Max($externalOverhang, $jettySize + 8 + ([string]$displayLabel).Length * 3)
+        }
         $layerId = if ($layerIdByKind.ContainsKey($edge.Kind)) { [string]$layerIdByKind[$edge.Kind] } else { '1' }
         Add-MxEdge $Document $root "edge-$edgeNumber" $cellById[$edge.Source] $cellById[$edge.Target] $displayLabel $style $edge.AzureId $edge.ResourceType $edge.Attributes `
-            -Parent $layerId
+            -Parent $layerId -Points $points
     }
     $legendY = $vnetY + $laneHeight + 25
     Add-PageLegend $Document $root $legendY 1820
-    Set-MxPageSize $model ([math]::Max(1840, $externalX + 280)) ($legendY + 54)
+    # Remote/hybrid nodes end 268 px into their 280 px lane.
+    $contentRight = [math]::Max(1840, [math]::Max($externalX + 280, $externalX + 268 + $externalOverhang))
+    Set-MxPageSize $model $contentRight ($legendY + 54)
 
     # Lets the Network Ranges page name the VNet a resource belongs to from what this
     # page actually drew, instead of re-deriving the relationships.
@@ -3272,7 +4020,7 @@ function Get-UnmappedResources {
 
 function New-UnmappedDrawIoPage {
     param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object[]]$Resources,[hashtable]$DetailPageIdByResourceId)
-    if($Resources.Count-eq0){return $false};$diagram=$Document.CreateElement('diagram');Set-XmlAttribute $diagram 'id' 'unmapped-resources';Set-XmlAttribute $diagram 'name' 'Unmapped Resources';$null=$MxFile.AppendChild($diagram);$model=$Document.CreateElement('mxGraphModel');foreach($pair in ([ordered]@{dx='1422';dy='794';grid='1';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth='1800';pageHeight='1200';math='0';shadow='0'}).GetEnumerator()){Set-XmlAttribute $model $pair.Key $pair.Value};Set-MxPageTheme $model;$null=$diagram.AppendChild($model);$root=$Document.CreateElement('root');$null=$model.AppendChild($root);$null=Add-MxBaseCell $Document $root
+    if($Resources.Count-eq0){return $false};$diagram=$Document.CreateElement('diagram');Set-XmlAttribute $diagram 'id' 'unmapped-resources';Set-XmlAttribute $diagram 'name' 'Unmapped Resources';$null=$MxFile.AppendChild($diagram);$model=$Document.CreateElement('mxGraphModel');foreach($pair in ([ordered]@{dx='1422';dy='794';grid='0';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth='1800';pageHeight='1200';math='0';shadow='0'}).GetEnumerator()){Set-XmlAttribute $model $pair.Key $pair.Value};Set-MxPageTheme $model;$null=$diagram.AppendChild($model);$root=$Document.CreateElement('root');$null=$model.AppendChild($root);$null=Add-MxBaseCell $Document $root
     Add-MxVertex $Document $root 'title' '1' '<b>Unmapped Resources</b><br><font color=''#666666''>Resources that could not be associated with a VNet from Azure Resource Graph relationships.</font>' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;align=left;spacingLeft=12;' 20 20 1320 60
     $columns=4;$width=290;$height=76;$gapX=25;$gapY=20;$index=0;foreach($resource in $Resources){$x=20+(($index%$columns)*($width+$gapX));$y=110+([math]::Floor($index/$columns)*($height+$gapY));$friendlyType=Get-FriendlyResourceType $resource.Kind $resource.Type $resource.Id;$label="<b>$($resource.Name)</b><br><font color='#777777'><i>$friendlyType</i></font><br><font color='#666666'>$($resource.ResourceGroup) | $($resource.Location)</font>";$attributes=@{tooltip=$resource.Id;tags=(Join-ShapeTag @('unmapped',$resource.Kind,$resource.Name))};if($DetailPageIdByResourceId.ContainsKey($resource.Id)){$attributes.link="data:page/id,$($DetailPageIdByResourceId[$resource.Id])"};Add-MxVertex $Document $root "unmapped-$($index+1)" '1' $label (Get-AzureNodeStyle $resource.Kind '#fffdf5' '#d6b656') $x $y $width $height $resource.Id $resource.Type $attributes;$index++};$legendY=130+([math]::Ceiling($Resources.Count/[double]$columns)*($height+$gapY));Add-PageLegend $Document $root $legendY;Set-MxPageSize $model 1340 ($legendY+54);return $true
 }
@@ -3288,11 +4036,929 @@ function New-DrawIoPageRoot {
     )
     $diagram=$Document.CreateElement('diagram');Set-XmlAttribute $diagram 'id' $Id;Set-XmlAttribute $diagram 'name' $Name;$null=$MxFile.AppendChild($diagram)
     $model=$Document.CreateElement('mxGraphModel')
-    foreach($pair in ([ordered]@{dx='1422';dy='794';grid='1';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth=[string]$PageWidth;pageHeight=[string]$PageHeight;math='0';shadow='0'}).GetEnumerator()){Set-XmlAttribute $model $pair.Key $pair.Value}
+    foreach($pair in ([ordered]@{dx='1422';dy='794';grid='0';gridSize='10';guides='1';tooltips='1';connect='1';arrows='1';fold='1';page='1';pageScale='1';pageWidth=[string]$PageWidth;pageHeight=[string]$PageHeight;math='0';shadow='0'}).GetEnumerator()){Set-XmlAttribute $model $pair.Key $pair.Value}
     Set-MxPageTheme $model
     $null=$diagram.AppendChild($model);$root=$Document.CreateElement('root');$null=$model.AppendChild($root)
     $baseCell=Add-MxBaseCell $Document $root
     return [pscustomobject]@{Diagram=$diagram;Model=$model;Root=$root;BaseCell=$baseCell}
+}
+
+function Test-HubManagedPeering {
+    param([object]$Index, [object]$Peering)
+
+    # A Virtual WAN connection can also appear as a peering from the spoke to the hub's
+    # Microsoft-managed VNet, named HV_<hub>_<id>. Where the VNet has a hub connection, that
+    # peering is the same link, so it is not drawn or counted a second time.
+    $remoteName = Get-ResourceNameFromId (ConvertTo-ResourceId (Get-ObjectValue $Peering 'remoteVnetId' ''))
+    if ($remoteName -notlike 'HV_*') { return $false }
+    $localId = ConvertTo-ResourceId (Get-ObjectValue $Peering 'vnetId' '')
+    return @($Index.HubConnectionsByVnetId[$localId] | Where-Object { $null -ne $_ }).Count -gt 0
+}
+
+function Get-GatewayVnetId {
+    param([object]$Index, [string]$GatewayId)
+
+    # A virtual network gateway belongs to the VNet of its GatewaySubnet. Returns '' for a
+    # gateway that is not in the export.
+    $id = ConvertTo-ResourceId $GatewayId
+    if (-not $id -or -not $Index.GatewayRelationById.ContainsKey($id)) { return '' }
+    foreach ($subnetId in @($Index.GatewayRelationById[$id].SubnetIds)) {
+        if ([string]$subnetId -match '^(.*/virtualnetworks/[^/]+)/subnets/') { return (ConvertTo-ResourceId $Matches[1]) }
+    }
+    return ''
+}
+
+function Get-OverviewConnection {
+    param([object]$Data, [object]$Index, [System.Collections.Generic.HashSet[string]]$ShownIds)
+
+    # Every link that touches a card on the overview: peerings, Virtual WAN hub connections,
+    # and VNet-to-VNet VPN connections, one entry per pair. The source is on the overview
+    # wherever one side is, so a line to the outside section starts at its card. A VPN
+    # connection whose far gateway is not in the export has no card to reach; it is
+    # returned per VNet for that VNet's tooltip.
+    $connections = [System.Collections.Generic.List[object]]::new()
+    $pairKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $rows = @(Get-DataRows $Data 'vnetPeerings')
+    $rows = @($rows | Where-Object { $ShownIds.Contains((ConvertTo-ResourceId (Get-ObjectValue $_ 'vnetId' ''))) }) +
+        @($rows | Where-Object { -not $ShownIds.Contains((ConvertTo-ResourceId (Get-ObjectValue $_ 'vnetId' ''))) })
+    foreach ($peering in $rows) {
+        $localId = ConvertTo-ResourceId (Get-ObjectValue $peering 'vnetId' '')
+        $remoteId = ConvertTo-ResourceId (Get-ObjectValue $peering 'remoteVnetId' '')
+        if (-not $localId -or -not $remoteId) { continue }
+        if (-not $ShownIds.Contains($localId) -and -not $ShownIds.Contains($remoteId)) { continue }
+        if (Test-HubManagedPeering $Index $peering) { continue }
+        if (-not $pairKeys.Add("peering|$(@($localId, $remoteId | Sort-Object) -join '|')")) { continue }
+        $flow = Get-PeeringFlow $Index $peering
+        $connections.Add([pscustomobject]@{
+            Kind = 'Peering'; SourceId = $localId; TargetId = $remoteId; Established = $flow.Connected
+            Flow = $flow; Row = $peering; Names = @($flow.LocalPeeringName); States = @($flow.LocalState)
+        })
+    }
+    foreach ($hubConnection in $Index.HubConnections) {
+        $vnetId = ConvertTo-ResourceId (Get-ObjectValue $hubConnection 'remoteVnetId' '')
+        $hubId = ConvertTo-ResourceId (Get-ObjectValue $hubConnection 'virtualHubId' '')
+        if (-not $vnetId -or -not $hubId) { continue }
+        if (-not $ShownIds.Contains($vnetId) -and -not $ShownIds.Contains($hubId)) { continue }
+        $state = [string](Get-ObjectValue $hubConnection 'provisioningState' '')
+        $sourceId, $targetId = if ($ShownIds.Contains($vnetId)) { $vnetId, $hubId } else { $hubId, $vnetId }
+        $connections.Add([pscustomobject]@{
+            Kind = 'Hub'; SourceId = $sourceId; TargetId = $targetId; Established = (Test-ConnectionEstablished $state)
+            Flow = $null; Row = $hubConnection; Names = @([string](Get-ObjectValue $hubConnection 'name' '')); States = @($state)
+        })
+    }
+    # Each side of a VNet-to-VNet VPN is its own connection resource; the two become one line.
+    $vpnByKey = [ordered]@{}
+    $unresolvedVpnByVnetId = @{}
+    foreach ($gatewayConnection in Get-DataRows $Data 'gatewayConnections') {
+        if ([string](Get-ObjectValue $gatewayConnection 'connectionType' '') -ne 'Vnet2Vnet') { continue }
+        $gateway1 = ConvertTo-ResourceId (Get-ObjectValue $gatewayConnection 'vnetGateway1Id' '')
+        $gateway2 = ConvertTo-ResourceId (Get-ObjectValue $gatewayConnection 'vnetGateway2Id' '')
+        $vnet1 = Get-GatewayVnetId $Index $gateway1
+        $vnet2 = Get-GatewayVnetId $Index $gateway2
+        $name = [string](Get-ObjectValue $gatewayConnection 'name' '')
+        $state = [string](Get-ObjectValue $gatewayConnection 'connectionStatus' '')
+        if (-not $state) { $state = [string](Get-ObjectValue $gatewayConnection 'provisioningState' '') }
+        if ($vnet1 -and $vnet2) {
+            if ($vnet1 -eq $vnet2 -or (-not $ShownIds.Contains($vnet1) -and -not $ShownIds.Contains($vnet2))) { continue }
+            $key = "vpn|$(@($vnet1, $vnet2 | Sort-Object) -join '|')"
+            if (-not $vpnByKey.Contains($key)) {
+                $sourceId, $targetId = if ($ShownIds.Contains($vnet1)) { $vnet1, $vnet2 } else { $vnet2, $vnet1 }
+                $vpnByKey[$key] = [pscustomobject]@{
+                    Kind = 'Vpn'; SourceId = $sourceId; TargetId = $targetId; Established = $true; Flow = $null; Row = $gatewayConnection
+                    Names = [System.Collections.Generic.List[string]]::new(); States = [System.Collections.Generic.List[string]]::new()
+                }
+            }
+            $vpn = $vpnByKey[$key]
+            $vpn.Names.Add($name); $vpn.States.Add($state)
+            # One side down makes the pair down; otherwise one side without a state leaves it unknown.
+            $sideEstablished = Test-ConnectionEstablished $state
+            if ($sideEstablished -eq $false) { $vpn.Established = $false } elseif ($null -eq $sideEstablished -and $vpn.Established -eq $true) { $vpn.Established = $null }
+        } else {
+            $knownVnetId = if ($vnet1) { $vnet1 } else { $vnet2 }
+            $farGatewayId = if ($vnet1) { $gateway2 } else { $gateway1 }
+            if (-not $knownVnetId -or -not $ShownIds.Contains($knownVnetId)) { continue }
+            Add-IndexValue $unresolvedVpnByVnetId $knownVnetId "$name to gateway $(Get-ResourceNameFromId $farGatewayId), not in this export: $state"
+        }
+    }
+    foreach ($vpn in $vpnByKey.Values) { $connections.Add($vpn) }
+    return [pscustomobject]@{ Connections = $connections.ToArray(); UnresolvedVpnByVnetId = $unresolvedVpnByVnetId }
+}
+
+function Test-ConnectionEstablished {
+    param([AllowEmptyString()][string]$State)
+
+    # $true when Azure reports a connection Connected or Succeeded, $false for any other
+    # state, and $null when it reports none: a Virtual WAN VPN connection, for one, carries
+    # no status of its own, and that says nothing either way.
+    if (-not $State) { return $null }
+    return ($State -eq 'Connected' -or $State -eq 'Succeeded')
+}
+
+function Get-ConnectionLineStyle {
+    param([AllowNull()][object]$Established)
+
+    # Virtual WAN and VPN links have no per-direction access setting, so an established one
+    # carries both arrowheads, one that is not established is drawn red without any, and one
+    # of unknown state has neither arrowheads nor red.
+    if ($null -eq $Established) { return 'strokeColor=#9673a6;strokeWidth=2;startArrow=none;endArrow=none;' }
+    if (-not $Established) { return 'strokeColor=#b85450;strokeWidth=2;startArrow=none;endArrow=none;' }
+    return 'strokeColor=#9673a6;strokeWidth=2;startArrow=classic;startFill=1;endArrow=classic;endFill=1;'
+}
+
+function Get-OrderPermutation {
+    param([string[]]$Ids)
+
+    # Every ordering of a few IDs, the given order first (Heap's algorithm).
+    $current = [string[]]$Ids.Clone()
+    $permutations = [System.Collections.Generic.List[object]]::new()
+    $permutations.Add([string[]]$current.Clone())
+    $counters = New-Object 'int[]' $current.Length
+    $i = 0
+    while ($i -lt $current.Length) {
+        if ($counters[$i] -lt $i) {
+            $swapWith = if ($i % 2 -eq 0) { 0 } else { $counters[$i] }
+            $held = $current[$swapWith]; $current[$swapWith] = $current[$i]; $current[$i] = $held
+            $permutations.Add([string[]]$current.Clone())
+            $counters[$i]++; $i = 0
+        } else {
+            $counters[$i] = 0; $i++
+        }
+    }
+    return $permutations.ToArray()
+}
+
+function Get-OverviewSlot {
+    param([object[]]$Items, [object[]]$Connections, [int]$Columns = 4)
+
+    # Connected cards are placed next to each other so their lines stay short. Groups of
+    # cards linked by peerings, hub connections, or VPN come first, largest first; each
+    # starts with its most-connected member, usually a hub, followed outward by its
+    # neighbours. Hubs of the same Virtual WAN are connected through the WAN, so they count
+    # as linked although no line joins them. Cards linked only to cards elsewhere follow,
+    # then unlinked ones, each by name. Returns one slot per grid cell in reading order; a
+    # slot without an item is an empty cell.
+    $sorted = @($Items | Sort-Object Name, Id)
+    $itemById = @{}; $nameRank = @{}; $neighbours = @{}
+    for ($i = 0; $i -lt $sorted.Count; $i++) {
+        $id = $sorted[$i].Id
+        $itemById[$id] = $sorted[$i]; $nameRank[$id] = $i
+        $neighbours[$id] = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
+    $linked = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($connection in $Connections) {
+        $sourceId = $connection.SourceId; $targetId = $connection.TargetId
+        foreach ($end in @($sourceId, $targetId)) { if ($itemById.ContainsKey($end)) { $null = $linked.Add($end) } }
+        if ($sourceId -ne $targetId -and $itemById.ContainsKey($sourceId) -and $itemById.ContainsKey($targetId)) {
+            $null = $neighbours[$sourceId].Add($targetId); $null = $neighbours[$targetId].Add($sourceId)
+        }
+    }
+    $hubIdsByWanId = @{}
+    foreach ($item in $sorted) { if ($item.Kind -eq 'Hub' -and $item.WanId) { Add-IndexValue $hubIdsByWanId $item.WanId $item.Id } }
+    foreach ($hubIds in $hubIdsByWanId.Values) {
+        foreach ($hubId in $hubIds) {
+            foreach ($otherHubId in $hubIds) {
+                if ($hubId -ne $otherHubId) { $null = $neighbours[$hubId].Add($otherHubId); $null = $linked.Add($hubId) }
+            }
+        }
+    }
+    $byPriority = @(@{ Expression = { $neighbours[$_].Count }; Descending = $true }, @{ Expression = { $nameRank[$_] } })
+    $visited = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $groups = [System.Collections.Generic.List[object]]::new()
+    foreach ($id in @($sorted | ForEach-Object { $_.Id })) {
+        if ($visited.Contains($id) -or $neighbours[$id].Count -eq 0) { continue }
+        $members = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $pending = [System.Collections.Generic.Stack[string]]::new(); $pending.Push($id)
+        while ($pending.Count -gt 0) {
+            $current = $pending.Pop()
+            if ($members.Add($current)) { foreach ($next in $neighbours[$current]) { $pending.Push($next) } }
+        }
+        # Walk the group breadth-first from its most-connected member.
+        $order = [System.Collections.Generic.List[string]]::new()
+        $queue = [System.Collections.Generic.Queue[string]]::new()
+        $start = @($members | Sort-Object $byPriority)[0]
+        $queue.Enqueue($start); $null = $visited.Add($start)
+        while ($queue.Count -gt 0) {
+            $current = $queue.Dequeue(); $order.Add($current)
+            foreach ($next in @($neighbours[$current] | Sort-Object $byPriority)) {
+                if ($visited.Add($next)) { $queue.Enqueue($next) }
+            }
+        }
+        # A group that fits in one row takes the ordering whose lines pass the fewest other
+        # cards, such as a VNet between the two it links to; the walk order wins ties.
+        if ($order.Count -ge 3 -and $order.Count -le $Columns) {
+            $best = $null; $bestCost = [int]::MaxValue
+            foreach ($candidate in @(Get-OrderPermutation $order.ToArray())) {
+                $position = @{}
+                for ($p = 0; $p -lt $candidate.Count; $p++) { $position[$candidate[$p]] = $p }
+                $cost = 0
+                foreach ($memberId in $candidate) {
+                    foreach ($otherId in $neighbours[$memberId]) {
+                        if ($position[$memberId] -lt $position[$otherId]) { $cost += $position[$otherId] - $position[$memberId] - 1 }
+                    }
+                }
+                if ($cost -lt $bestCost) { $best = $candidate; $bestCost = $cost }
+            }
+            $order = [System.Collections.Generic.List[string]]::new([string[]]$best)
+        }
+        $groups.Add([pscustomobject]@{ Ids = $order.ToArray(); Count = $order.Count; FirstRank = $nameRank[$order[0]] })
+    }
+    $singles = [System.Collections.Generic.Queue[object]]::new()
+    foreach ($item in $sorted) { if ($neighbours[$item.Id].Count -eq 0 -and $linked.Contains($item.Id)) { $singles.Enqueue($item) } }
+    foreach ($item in $sorted) { if (-not $linked.Contains($item.Id)) { $singles.Enqueue($item) } }
+    $slots = [System.Collections.Generic.List[object]]::new()
+    foreach ($group in @($groups | Sort-Object @{ Expression = 'Count'; Descending = $true }, FirstRank)) {
+        # A group that does not fit in the rest of the current row starts on a new one, so
+        # no line has to run from a row's end back to the start of the next. Cards without
+        # lines between them fill the cells left over.
+        $used = $slots.Count % $Columns
+        if ($used -gt 0 -and $used + $group.Count -gt $Columns) {
+            while ($slots.Count % $Columns -ne 0) {
+                $filler = if ($singles.Count -gt 0) { $singles.Dequeue() } else { $null }
+                $slots.Add([pscustomobject]@{ Item = $filler })
+            }
+        }
+        foreach ($id in $group.Ids) { $slots.Add([pscustomobject]@{ Item = $itemById[$id] }) }
+    }
+    while ($singles.Count -gt 0) { $slots.Add([pscustomobject]@{ Item = $singles.Dequeue() }) }
+    return $slots.ToArray()
+}
+
+function Get-OverviewVnetSummary {
+    param(
+        [object]$Index,
+        [string]$VnetId,
+        [System.Collections.Generic.HashSet[string]]$ShownIds,
+        [hashtable]$OneSidedByRemoteId,
+        [object[]]$Connections,
+        [hashtable]$UnresolvedVpnByVnetId
+    )
+
+    # The number of this VNet's peerings for its card, and its tooltip: one line per
+    # peering, including peerings to VNets outside this overview and peerings another VNet
+    # created toward this one without a peering back, then its Virtual WAN hub and VPN
+    # connections.
+    $entries = @(
+        foreach ($peering in @($Index.PeeringsByVnetId[$VnetId] | Where-Object { $null -ne $_ -and (Get-ObjectValue $_ 'remoteVnetId' '') })) {
+            if (Test-HubManagedPeering $Index $peering) { continue }
+            $flow = Get-PeeringFlow $Index $peering
+            $notes = @($(if ($flow.Connected) { 'connected' } else { $flow.LocalState.ToLowerInvariant() }))
+            if ($flow.IsSubnetPeering) { $notes += 'subnet peering' }
+            if ($flow.IsOutOfSync) { $notes += 'not in sync' }
+            if (-not $ShownIds.Contains($flow.RemoteId)) { $notes += 'outside this overview' }
+            [pscustomobject]@{ Name = $flow.RemoteName; Text = "$($flow.RemoteName): $($notes -join ', ')" }
+        }
+        foreach ($flow in @($OneSidedByRemoteId[$VnetId] | Where-Object { $null -ne $_ })) {
+            $notes = @("$($flow.LocalState.ToLowerInvariant()) on $($flow.LocalName)'s side only, no peering back")
+            if (-not $ShownIds.Contains($flow.LocalId)) { $notes += 'outside this overview' }
+            [pscustomobject]@{ Name = $flow.LocalName; Text = "$($flow.LocalName): $($notes -join ', ')" }
+        }
+    )
+    $tooltip = @()
+    if ($entries.Count -gt 0) { $tooltip += 'Peered with:'; $tooltip += @($entries | Sort-Object Name | ForEach-Object { $_.Text }) }
+    $hubLines = @(); $vpnLines = @()
+    foreach ($connection in @($Connections | Where-Object { $_.Kind -ne 'Peering' -and ($_.SourceId -eq $VnetId -or $_.TargetId -eq $VnetId) })) {
+        $otherId = if ($connection.SourceId -eq $VnetId) { $connection.TargetId } else { $connection.SourceId }
+        if ($connection.Kind -eq 'Hub') {
+            $hubName = if ($Index.VirtualHubById.ContainsKey($otherId)) { [string](Get-ObjectValue $Index.VirtualHubById[$otherId] 'name' (Get-ResourceNameFromId $otherId)) } else { Get-ResourceNameFromId $otherId }
+            $hubLines += "$($hubName): $(if ($connection.Established) { 'connected' } elseif ($null -eq $connection.Established) { 'state not reported' } else { ([string]$connection.States[0]).ToLowerInvariant() })"
+        } else {
+            $otherName = if ($Index.VnetById.ContainsKey($otherId)) { [string](Get-ObjectValue $Index.VnetById[$otherId] 'name' (Get-ResourceNameFromId $otherId)) } else { Get-ResourceNameFromId $otherId }
+            $vpnLines += "$($otherName): $(@($connection.States | Select-Object -Unique) -join ' / ')"
+        }
+    }
+    $vpnLines += @($UnresolvedVpnByVnetId[$VnetId] | Where-Object { $_ })
+    if ($hubLines.Count -gt 0) { $tooltip += 'Virtual WAN hub:'; $tooltip += $hubLines }
+    if ($vpnLines.Count -gt 0) { $tooltip += 'VNet-to-VNet VPN:'; $tooltip += $vpnLines }
+    return [pscustomobject]@{ Count = $entries.Count; Tooltip = $tooltip }
+}
+
+function Get-OverviewHubCard {
+    param([object]$Index, [object]$Hub, [object[]]$Connections)
+
+    # A Virtual WAN hub has no page of its own, so its card names the WAN and its tooltip
+    # lists the gateways on the hub and the VNets connected to it.
+    $hubId = ConvertTo-ResourceId (Get-ObjectValue $Hub 'id')
+    $name = [string](Get-ObjectValue $Hub 'name' (Get-ResourceNameFromId $hubId))
+    $wanId = ConvertTo-ResourceId (Get-ObjectValue $Hub 'virtualWanId' '')
+    $wanName = if ($wanId) { Get-ResourceNameFromId $wanId } else { '' }
+    $hubConnections = @($Connections | Where-Object { $_.Kind -eq 'Hub' -and ($_.SourceId -eq $hubId -or $_.TargetId -eq $hubId) })
+    $gateways = @(
+        @($Index.ExpressRouteGatewaysByHubId[$hubId] | Where-Object { $null -ne $_ } | ForEach-Object {
+            $circuitNames = @($Index.ExpressRouteConnectionsByGatewayId[(ConvertTo-ResourceId (Get-ObjectValue $_ 'id' ''))] | Where-Object { $null -ne $_ } |
+                ForEach-Object { Get-ResourceNameFromId ([string](Get-ObjectValue $_ 'circuitPeeringId' '') -replace '/peerings/[^/]+$', '') } | Select-Object -Unique)
+            "ExpressRoute $(Get-ObjectValue $_ 'name' '')$(if ($circuitNames.Count -gt 0) { " (circuits: $($circuitNames -join ', '))" })"
+        })
+        @($Index.VpnGatewaysByHubId[$hubId] | Where-Object { $null -ne $_ } | ForEach-Object { "VPN $(Get-ObjectValue @($_.Rows)[0] 'name' '')" })
+        @($Index.P2sVpnGatewaysByHubId[$hubId] | Where-Object { $null -ne $_ } | ForEach-Object { "Point-to-site $(Get-ObjectValue $_ 'name' '')" })
+        @($Index.FirewallIdsByHubId[$hubId] | Where-Object { $_ } | ForEach-Object { "Firewall $(Get-ObjectValue @($Index.FirewallRelationById[[string]$_].Rows)[0] 'name' (Get-ResourceNameFromId $_))" })
+    )
+    $connectedLines = @($hubConnections | ForEach-Object {
+        $vnetId = if ($_.SourceId -eq $hubId) { $_.TargetId } else { $_.SourceId }
+        $vnetName = if ($Index.VnetById.ContainsKey($vnetId)) { [string](Get-ObjectValue $Index.VnetById[$vnetId] 'name' (Get-ResourceNameFromId $vnetId)) } else { Get-ResourceNameFromId $vnetId }
+        "$($vnetName): $(if ($_.Established) { 'connected' } elseif ($null -eq $_.Established) { 'state not reported' } else { ([string]$_.States[0]).ToLowerInvariant() })"
+    } | Sort-Object)
+    $tooltip = @(
+        "Virtual WAN hub $name"
+        "Virtual WAN: $(if ($wanName) { $wanName } else { 'not reported' })"
+        "Gateways: $(if ($gateways.Count -gt 0) { $gateways -join '; ' } else { 'none' })"
+    )
+    if ($connectedLines.Count -gt 0) { $tooltip += 'Connected VNets:'; $tooltip += $connectedLines }
+    $tooltip += "Whether these VNets reach each other depends on the hub's routing, which is not evaluated."
+    $tooltip += $hubId
+    $countLine = "Connections: $($hubConnections.Count)"
+    if ($wanName) { $countLine = "WAN: $wanName &#183; $countLine" }
+    $label = "<b>$name</b><br><font color='#777777'><i>Virtual WAN hub</i></font><br>$(Get-ObjectValue $Hub 'addressPrefix' '')" +
+        "<br><font color='#666666'>$(Get-ObjectValue $Hub 'location' '') | $(Get-ObjectValue $Hub 'resourceGroup' '')</font><br>$countLine"
+    return [pscustomobject]@{ Label = $label; Tooltip = ($tooltip -join "`n") }
+}
+
+function Get-OverviewStatistic {
+    param([object[]]$Items, [object]$Index, [object[]]$Connections)
+
+    # Counts for the overview header and each subscription lane, over the cards in the lanes.
+    # A peering or VPN counts once per pair: once in the total, and once in each
+    # subscription it touches, so one between two subscriptions appears in both lanes.
+    $newCounter = {
+        [pscustomobject]@{
+            Subscriptions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            Vnets = 0; Subnets = 0; Hubs = 0
+            Regions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            Peerings = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            Vpns = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+    }
+    $total = & $newCounter
+    $bySubscription = @{}
+    $subscriptionById = @{}
+    foreach ($item in $Items) {
+        $subscriptionById[$item.Id] = $item.SubscriptionId
+        if (-not $bySubscription.ContainsKey($item.SubscriptionId)) { $bySubscription[$item.SubscriptionId] = & $newCounter }
+        $subnetCount = if ($item.Kind -eq 'VNet') { @($Index.SubnetsByVnetId[$item.Id] | Where-Object { $null -ne $_ }).Count } else { 0 }
+        $location = [string](Get-ObjectValue $item.Row 'location' '')
+        foreach ($counter in @($total, $bySubscription[$item.SubscriptionId])) {
+            $null = $counter.Subscriptions.Add($item.SubscriptionId)
+            if ($item.Kind -eq 'Hub') { $counter.Hubs++ } else { $counter.Vnets++; $counter.Subnets += $subnetCount }
+            if ($location) { $null = $counter.Regions.Add($location) }
+        }
+    }
+    foreach ($connection in $Connections) {
+        $property = switch ($connection.Kind) { 'Peering' { 'Peerings' } 'Vpn' { 'Vpns' } default { '' } }
+        if (-not $property) { continue }
+        $pairKey = @($connection.SourceId, $connection.TargetId | Sort-Object) -join '|'
+        $null = $total.$property.Add($pairKey)
+        foreach ($end in @($connection.SourceId, $connection.TargetId)) {
+            if ($subscriptionById.ContainsKey($end)) { $null = $bySubscription[$subscriptionById[$end]].$property.Add($pairKey) }
+        }
+    }
+    return [pscustomobject]@{ Total = $total; BySubscription = $bySubscription }
+}
+
+function Format-OverviewStatistic {
+    param([object]$Counter, [switch]$IncludeSubscriptions)
+
+    # Hubs and VPNs are mentioned only where there are any. The header spells them out; a
+    # lane's narrower text uses short words.
+    $parts = [System.Collections.Generic.List[string]]::new()
+    $add = { param($Count, $Singular, $Plural) $parts.Add($(if ($Count -eq 1) { "1 $Singular" } else { "$Count $Plural" })) }
+    if ($IncludeSubscriptions) { & $add $Counter.Subscriptions.Count 'subscription' 'subscriptions' }
+    & $add $Counter.Vnets 'VNet' 'VNets'
+    if ($Counter.Hubs -gt 0) {
+        if ($IncludeSubscriptions) { & $add $Counter.Hubs 'Virtual WAN hub' 'Virtual WAN hubs' } else { & $add $Counter.Hubs 'hub' 'hubs' }
+    }
+    & $add $Counter.Subnets 'subnet' 'subnets'
+    & $add $Counter.Peerings.Count 'peering' 'peerings'
+    if ($Counter.Vpns.Count -gt 0) {
+        if ($IncludeSubscriptions) { & $add $Counter.Vpns.Count 'VNet-to-VNet VPN' 'VNet-to-VNet VPNs' } else { & $add $Counter.Vpns.Count 'VPN' 'VPNs' }
+    }
+    & $add $Counter.Regions.Count 'region' 'regions'
+    return ($parts -join ' &#183; ')
+}
+
+function Get-OverviewOutsideItem {
+    param(
+        [object]$Index,
+        [object[]]$Connections,
+        [System.Collections.Generic.HashSet[string]]$ShownIds,
+        [hashtable]$NameById
+    )
+
+    # Connected VNets without a card of their own, outside the export or left out by a scope
+    # filter, are known only from the links that point to them. Returns a card item for each,
+    # in the order the links first name them, carrying what those links reveal.
+    $externals = [ordered]@{}
+    foreach ($connection in $Connections) {
+        $sourceShown = $ShownIds.Contains($connection.SourceId)
+        if ($sourceShown -eq $ShownIds.Contains($connection.TargetId)) { continue }
+        $externalId = if ($sourceShown) { $connection.TargetId } else { $connection.SourceId }
+        $peerId = if ($sourceShown) { $connection.SourceId } else { $connection.TargetId }
+        if (-not $externals.Contains($externalId)) {
+            $vnet = if ($Index.VnetById.ContainsKey($externalId)) { $Index.VnetById[$externalId] } else { $null }
+            $name = if ($vnet) { [string](Get-ObjectValue $vnet 'name' (Get-ResourceNameFromId $externalId)) } else { Get-ResourceNameFromId $externalId }
+            $externals[$externalId] = [pscustomobject]@{
+                Id = $externalId; Vnet = $vnet; Name = $name
+                # A hub's managed VNet, reached by a peering while the hub itself is not in the export.
+                IsLikelyHub = ($null -eq $vnet -and $name -like 'HV_*')
+                PeerIds = [System.Collections.Generic.List[string]]::new(); Descriptions = [System.Collections.Generic.List[object]]::new()
+                Prefixes = [System.Collections.Generic.List[string]]::new(); PeeredPrefixes = [System.Collections.Generic.List[string]]::new()
+            }
+        }
+        $external = $externals[$externalId]
+        if (-not $external.PeerIds.Contains($peerId)) { $external.PeerIds.Add($peerId) }
+        $peerName = [string]$NameById[$peerId]
+        if ($connection.Kind -eq 'Peering') {
+            $flow = $connection.Flow
+            $external.Descriptions.Add(@("Peering $($flow.LocalName) $([char]0x2194) $($flow.RemoteName)") + @(Get-PeeringFlowDescription $flow))
+            # The card's side of the peering records the remote VNet's address space and the
+            # part of it that is peered.
+            if ((ConvertTo-ResourceId (Get-ObjectValue $connection.Row 'vnetId' '')) -eq $peerId) {
+                foreach ($entry in @(@{ List = $external.Prefixes; Property = 'remoteAddressPrefixes' }, @{ List = $external.PeeredPrefixes; Property = 'peeredAddressPrefixes' })) {
+                    foreach ($prefix in @(Get-PrefixList (Get-ObjectValue $connection.Row $entry.Property ''))) {
+                        if (-not $entry.List.Contains($prefix)) { $entry.List.Add($prefix) }
+                    }
+                }
+            }
+        } elseif ($connection.Kind -eq 'Vpn') {
+            $lines = @("VNet-to-VNet VPN $peerName $([char]0x2194) $($external.Name)")
+            for ($i = 0; $i -lt $connection.Names.Count; $i++) { $lines += "Connection $($connection.Names[$i]): $($connection.States[$i])" }
+            $external.Descriptions.Add($lines)
+        } else {
+            $external.Descriptions.Add(@("Virtual WAN connection $($connection.Names[0]) to $peerName", "State: $($connection.States[0])"))
+        }
+    }
+    return @($externals.Values | ForEach-Object { [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Kind = 'Outside'; Row = $null; SubscriptionId = ''; WanId = ''; External = $_ } })
+}
+
+function Get-OverviewOutsideCard {
+    param([object]$External, [hashtable]$SubscriptionNames, [hashtable]$NameById)
+
+    # The label and tooltip of a card outside the overview: where the VNet is, its address
+    # space or at least the peered part of it, and the cards it is connected to.
+    $id = $External.Id
+    $subscriptionId = ''; $resourceGroup = ''
+    if ($id -match '^/subscriptions/([^/]+)/resourcegroups/([^/]+)/') { $subscriptionId = $Matches[1]; $resourceGroup = $Matches[2] }
+    if ($External.Vnet) { $resourceGroup = [string](Get-ObjectValue $External.Vnet 'resourceGroup' $resourceGroup) }
+    $scope = if ($External.Vnet) { 'Outside the selected VNets' } elseif ($External.IsLikelyHub) { 'Likely a Virtual WAN hub' } else { 'Not in this export' }
+    $prefixes = if ($External.Vnet) { ConvertTo-DisplayList (Get-ObjectValue $External.Vnet 'addressPrefixes' '') } else { @($External.Prefixes) -join ', ' }
+    # Without the address space, the peered part is shown, marked so it does not read as
+    # the whole VNet.
+    if (-not $prefixes -and $External.PeeredPrefixes.Count -gt 0) { $prefixes = "Peered: $(@($External.PeeredPrefixes) -join ', ')" }
+    if (-not $prefixes) { $prefixes = "<font color='#666666'>Address space not reported</font>" }
+    $subscriptionName = if ($SubscriptionNames.ContainsKey($subscriptionId)) { [string]$SubscriptionNames[$subscriptionId] } else { '' }
+    $subscriptionText = if ($subscriptionName) { $subscriptionName } elseif ($subscriptionId.Length -gt 13) { "Sub $($subscriptionId.Substring(0, 8))&#8230;" } else { "Sub $subscriptionId" }
+    $peerNames = @($External.PeerIds | ForEach-Object { [string]$NameById[$_] } | Sort-Object)
+    $peerText = $peerNames[0] + $(if ($peerNames.Count -gt 1) { " +$($peerNames.Count - 1)" } else { '' })
+    $tooltip = @("$($External.Name): $scope", "Subscription: $subscriptionId$(if ($subscriptionName) { " ($subscriptionName)" })", "Resource group: $resourceGroup")
+    foreach ($description in $External.Descriptions) { $tooltip += ''; $tooltip += @($description) }
+    $tooltip += ''; $tooltip += $id
+    $label = "<b>$($External.Name)</b><br><font color='#777777'><i>$scope</i></font><br>$prefixes<br><font color='#666666'>$subscriptionText | $resourceGroup</font><br>Connected to: $peerText"
+    $kind = if ($External.IsLikelyHub) { 'VirtualHub' } else { 'VNet' }
+    return [pscustomobject]@{ Label = $label; Tooltip = ($tooltip -join "`n"); Kind = $kind }
+}
+
+function Get-OverviewPlacement {
+    param([object[]]$Lanes, [object[]]$Connections, [int]$Columns = 4)
+
+    # Linked cards go close together, so their lines stay short. A hub, a Virtual WAN hub or
+    # any card with three or more lines, takes an inner column of its lane's first row,
+    # where its partners fit on both sides, and subscriptions with a hub come first. Every
+    # card linked to a placed card then goes to the free cell nearest it, in the same column
+    # when that card is in another lane. A group not yet linked to anything placed starts in
+    # the first row with room for all of it, in the order Get-OverviewSlot gives, which keeps
+    # its members side by side. Cards outside the overview form the last lane. Returns the
+    # lanes in display order, each with its cards in reading order and its row count, and
+    # the cell of every card by ID.
+    $laneOfId = @{}
+    foreach ($lane in $Lanes) { foreach ($item in $lane.Items) { $laneOfId[$item.Id] = $lane } }
+    $neighbours = @{}; $degree = @{}
+    foreach ($id in $laneOfId.Keys) { $neighbours[$id] = [System.Collections.Generic.List[string]]::new(); $degree[$id] = 0 }
+    foreach ($connection in $Connections) {
+        $sourceId = $connection.SourceId; $targetId = $connection.TargetId
+        if ($sourceId -eq $targetId -or -not $laneOfId.ContainsKey($sourceId) -or -not $laneOfId.ContainsKey($targetId)) { continue }
+        $degree[$sourceId]++; $degree[$targetId]++
+        if (-not $neighbours[$sourceId].Contains($targetId)) { $neighbours[$sourceId].Add($targetId); $neighbours[$targetId].Add($sourceId) }
+    }
+    $isHub = { param($Item) $Item.Kind -eq 'Hub' -or $degree[$Item.Id] -ge 3 }
+    $ordered = @(
+        @($Lanes | Where-Object { -not $_.IsOutside -and @($_.Items | Where-Object { & $isHub $_ }).Count -gt 0 })
+        @($Lanes | Where-Object { -not $_.IsOutside -and @($_.Items | Where-Object { & $isHub $_ }).Count -eq 0 })
+        @($Lanes | Where-Object { $_.IsOutside })
+    )
+
+    $cellById = @{}
+    $placedLanes = [System.Collections.Generic.List[object]]::new()
+    for ($laneIndex = 0; $laneIndex -lt $ordered.Count; $laneIndex++) {
+        $lane = $ordered[$laneIndex]
+        $rank = @{}
+        foreach ($slot in @(Get-OverviewSlot -Items @($lane.Items) -Connections $Connections -Columns $Columns)) {
+            if ($null -ne $slot.Item) { $rank[$slot.Item.Id] = $rank.Count }
+        }
+        $pending = [System.Collections.Generic.List[object]]::new()
+        foreach ($item in @($lane.Items | Sort-Object { $rank[$_.Id] })) { $pending.Add($item) }
+        $occupied = @{}; $rowCount = 0
+        $cards = [System.Collections.Generic.List[object]]::new()
+        $place = {
+            param($Item, [int]$Row, [int]$Column)
+            $occupied["$Row|$Column"] = $true
+            $cellById[$Item.Id] = [pscustomobject]@{ Lane = $laneIndex; Row = $Row; Column = $Column }
+            $cards.Add([pscustomobject]@{ Item = $Item; Row = $Row; Column = $Column })
+            $null = $pending.Remove($Item)
+        }
+        if (-not $lane.IsOutside) {
+            foreach ($hub in @($pending | Where-Object { & $isHub $_ } | Sort-Object @{ Expression = { $degree[$_.Id] }; Descending = $true }, Name, Id)) {
+                $cell = $null
+                for ($row = 0; $null -eq $cell; $row++) {
+                    foreach ($column in @(1, 2, 0, 3)) {
+                        if ($column -lt $Columns -and $null -eq $cell -and -not $occupied.ContainsKey("$row|$column")) { $cell = @($row, $column) }
+                    }
+                }
+                & $place $hub $cell[0] $cell[1]
+                $rowCount = [math]::Max($rowCount, $cell[0] + 1)
+            }
+        }
+        while ($pending.Count -gt 0) {
+            $next = $null; $nextPartners = @()
+            foreach ($item in $pending) {
+                $partners = @($neighbours[$item.Id] | Where-Object { $cellById.ContainsKey($_) })
+                if ($partners.Count -gt $nextPartners.Count) { $next = $item; $nextPartners = $partners }
+            }
+            if ($null -ne $next) {
+                $anchor = @($nextPartners | ForEach-Object { $cellById[$_] } | Sort-Object Lane, Row, Column)[0]
+                $best = $null; $bestScore = [double]::MaxValue
+                for ($row = 0; $row -le $rowCount; $row++) {
+                    for ($column = 0; $column -lt $Columns; $column++) {
+                        if ($occupied.ContainsKey("$row|$column")) { continue }
+                        # Within a lane the same row wins over the one above, so linked cards end
+                        # up side by side; across lanes the same column wins.
+                        $score = if ($anchor.Lane -eq $laneIndex) {
+                            (([math]::Abs($column - $anchor.Column) + [math]::Abs($row - $anchor.Row)) * 10) + $(if ($row -ne $anchor.Row) { 5 } else { 0 }) + $row
+                        } else {
+                            ([math]::Abs($column - $anchor.Column) * 10) + ($row * 15)
+                        }
+                        if ($score -lt $bestScore) { $bestScore = $score; $best = @($row, $column) }
+                    }
+                }
+            } else {
+                # The group of the first card left, among the cards still to place in this lane.
+                $next = $pending[0]
+                $group = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                $walk = [System.Collections.Generic.Stack[string]]::new(); $walk.Push($next.Id)
+                while ($walk.Count -gt 0) {
+                    $current = $walk.Pop()
+                    if ($group.Add($current)) { foreach ($other in $neighbours[$current]) { if ([object]::ReferenceEquals($laneOfId[$other], $lane) -and -not $cellById.ContainsKey($other)) { $walk.Push($other) } } }
+                }
+                $width = [math]::Min($group.Count, $Columns)
+                $best = $null
+                for ($row = 0; $null -eq $best; $row++) {
+                    for ($column = 0; $column -le $Columns - $width -and $null -eq $best; $column++) {
+                        $free = $true
+                        for ($offset = 0; $offset -lt $width; $offset++) { if ($occupied.ContainsKey("$row|$($column + $offset)")) { $free = $false } }
+                        if ($free) { $best = @($row, $column) }
+                    }
+                }
+            }
+            & $place $next $best[0] $best[1]
+            $rowCount = [math]::Max($rowCount, $best[0] + 1)
+        }
+        $placedLanes.Add([pscustomobject]@{ Lane = $lane; Cards = @($cards | Sort-Object Row, Column); Rows = $rowCount })
+    }
+    return [pscustomobject]@{ Lanes = $placedLanes.ToArray(); CellById = $cellById }
+}
+
+function Get-ReversedLineStyle {
+    param([string]$Style)
+
+    # The same line drawn from its other end: the start and end arrowheads trade places.
+    $parts = foreach ($part in ($Style -split ';')) {
+        if ($part -match '^(start|end)(Arrow|Fill)=(.*)$') { "$(if ($Matches[1] -eq 'start') { 'end' } else { 'start' })$($Matches[2])=$($Matches[3])" } else { $part }
+    }
+    return ($parts -join ';')
+}
+
+function Get-OverviewRoutePlan {
+    param([object]$Placement, [object[]]$Lines, [int]$Columns = 4)
+
+    # Each line's way through the gaps between cards, planned before any position is known
+    # so every gap can be sized to the lines it carries. Gap "lane|r" lies above row r of its
+    # lane; gutter g runs between columns g-1 and g. Neighbours in a row are joined side to
+    # side, and cards in one column with nothing between them straight down. Other lines
+    # leave the upper card's bottom into the gap below it, run down an inner gutter when
+    # they have to reach another row, and enter the lower card through the gap above it.
+    # Lines between subscriptions stay in the inner columns and gutters, clear of the text
+    # in the lane headers.
+    $cells = $Placement.CellById
+    $isBefore = { param($First, $Second) ($First.Lane -lt $Second.Lane) -or ($First.Lane -eq $Second.Lane -and ($First.Row -lt $Second.Row -or ($First.Row -eq $Second.Row -and $First.Column -lt $Second.Column))) }
+    $lineCountByPair = @{}
+    foreach ($line in $Lines) { $pairKey = @($line.SourceId, $line.TargetId | Sort-Object) -join '|'; $lineCountByPair[$pairKey] = 1 + [int]$lineCountByPair[$pairKey] }
+
+    # A card with more than four lines that look alike, leading below it or elsewhere in its
+    # row, gets one trunk for them: they leave it together and share their tracks until each
+    # branches off to its card. Labelled lines and lines that look different, such as red
+    # ones, keep a way of their own, so a trunk never hides an exception.
+    $candidatesByHub = @{}
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        if ($line.Label) { continue }
+        foreach ($hubId in @($line.SourceId, $line.TargetId)) {
+            $spokeId = if ($hubId -eq $line.SourceId) { $line.TargetId } else { $line.SourceId }
+            $hub = $cells[$hubId]; $spoke = $cells[$spokeId]
+            $isLower = $spoke.Lane -gt $hub.Lane -or ($spoke.Lane -eq $hub.Lane -and $spoke.Row -ge $hub.Row)
+            $isBeside = $spoke.Lane -eq $hub.Lane -and $spoke.Row -eq $hub.Row -and [math]::Abs($spoke.Column - $hub.Column) -le 1
+            if (-not $isLower -or $isBeside) { continue }
+            $style = if ($hubId -eq $line.SourceId) { $line.LineStyle } else { Get-ReversedLineStyle $line.LineStyle }
+            if (-not $candidatesByHub.ContainsKey($hubId)) { $candidatesByHub[$hubId] = [System.Collections.Generic.List[object]]::new() }
+            $candidatesByHub[$hubId].Add([pscustomobject]@{ Index = $i; Look = (@($style -split ';' | Where-Object { $_ } | Sort-Object) -join ';') })
+        }
+    }
+    $trunkHubByLine = @{}
+    foreach ($hubId in @($candidatesByHub.Keys | Sort-Object @{ Expression = { $candidatesByHub[$_].Count }; Descending = $true }, @{ Expression = { $_ } })) {
+        $looks = @($candidatesByHub[$hubId] | Where-Object { -not $trunkHubByLine.ContainsKey($_.Index) } | Group-Object Look |
+            Sort-Object @{ Expression = 'Count'; Descending = $true }, @{ Expression = { ($_.Group | Measure-Object Index -Minimum).Minimum } })
+        if ($looks.Count -gt 0 -and $looks[0].Count -gt 4) { foreach ($candidate in $looks[0].Group) { $trunkHubByLine[$candidate.Index] = $hubId } }
+    }
+    $trunkHubs = [System.Collections.Generic.HashSet[string]]::new([string[]]@($trunkHubByLine.Values), [System.StringComparer]::OrdinalIgnoreCase)
+    # The trunk runs down the inner gutter beside its hub on the side where most of its
+    # distant cards are.
+    $farColumnsByHub = @{}
+    foreach ($index in $trunkHubByLine.Keys) {
+        $hubId = $trunkHubByLine[$index]; $line = $Lines[$index]
+        $spoke = $cells[$(if ($line.SourceId -eq $hubId) { $line.TargetId } else { $line.SourceId })]; $hub = $cells[$hubId]
+        if ($spoke.Lane -ne $hub.Lane -or $spoke.Row -gt $hub.Row + 1) { Add-IndexValue $farColumnsByHub $hubId $spoke.Column }
+    }
+    $busByHub = @{}
+    foreach ($hubId in $farColumnsByHub.Keys) {
+        $hubColumn = $cells[$hubId].Column
+        $averageColumn = (@($farColumnsByHub[$hubId]) | Measure-Object -Average).Average
+        $busByHub[$hubId] = [math]::Min($Columns - 1, [math]::Max(1, $(if ($averageColumn -le $hubColumn) { $hubColumn } else { $hubColumn + 1 })))
+    }
+
+    $plans = [System.Collections.Generic.List[object]]::new()
+    $horizontalTracks = @{}; $verticalTracks = @{}; $sharedTracks = @{}
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        $plan = [pscustomobject]@{ Index = $i; Line = $line; Kind = ''; Upper = $line.SourceId; Lower = $line.TargetId; Below = ''; Above = ''; Gutter = 0; Trunk = ''; Reverse = $false }
+        if ($trunkHubByLine.ContainsKey($i)) {
+            # Trunk lines are drawn from the hub, so the dashes of the shared stretch line up.
+            $hubId = $trunkHubByLine[$i]
+            $plan.Trunk = $hubId; $plan.Upper = $hubId; $plan.Lower = $(if ($line.SourceId -eq $hubId) { $line.TargetId } else { $line.SourceId }); $plan.Reverse = $line.SourceId -ne $hubId
+            $hub = $cells[$hubId]; $spoke = $cells[$plan.Lower]
+            $plan.Below = "$($hub.Lane)|$($hub.Row + 1)"
+            if ($spoke.Lane -eq $hub.Lane -and $spoke.Row -eq $hub.Row) { $plan.Kind = 'TrunkSameRow' }
+            elseif ($spoke.Lane -eq $hub.Lane -and $spoke.Row -eq $hub.Row + 1) { $plan.Kind = 'TrunkNextRow' }
+            else { $plan.Kind = 'Trunk'; $plan.Above = "$($spoke.Lane)|$($spoke.Row)"; $plan.Gutter = $busByHub[$hubId] }
+            foreach ($gap in @($plan.Below, $plan.Above)) {
+                if ($gap -and -not $sharedTracks.ContainsKey("$hubId|$gap")) { $sharedTracks["$hubId|$gap"] = $true; $horizontalTracks[$gap] = 1 + [int]$horizontalTracks[$gap] }
+            }
+            if ($plan.Gutter -gt 0 -and -not $sharedTracks.ContainsKey("$hubId|gutter")) { $sharedTracks["$hubId|gutter"] = $true; $verticalTracks[$plan.Gutter] = 1 + [int]$verticalTracks[$plan.Gutter] }
+            $plans.Add($plan)
+            continue
+        }
+        if (& $isBefore $cells[$plan.Lower] $cells[$plan.Upper]) { $plan.Upper = $line.TargetId; $plan.Lower = $line.SourceId }
+        $upper = $cells[$plan.Upper]; $lower = $cells[$plan.Lower]
+        $sameLane = $upper.Lane -eq $lower.Lane
+        if ($sameLane -and $upper.Row -eq $lower.Row -and [math]::Abs($upper.Column - $lower.Column) -eq 1) {
+            $plan.Kind = 'Side'
+        } else {
+            # The centre of a trunk hub's bottom belongs to its trunk.
+            $straight = $upper.Column -eq $lower.Column -and $lineCountByPair[(@($plan.Upper, $plan.Lower | Sort-Object) -join '|')] -eq 1 -and
+                ($sameLane -or ($upper.Column -ge 1 -and $upper.Column -le $Columns - 2)) -and -not $trunkHubs.Contains($plan.Upper)
+            if ($straight) {
+                foreach ($cell in $cells.Values) {
+                    if ($cell.Column -eq $upper.Column -and (& $isBefore $upper $cell) -and (& $isBefore $cell $lower)) { $straight = $false; break }
+                }
+            }
+            if ($straight) {
+                $plan.Kind = 'Straight'
+            } elseif ($sameLane -and $upper.Row -eq $lower.Row) {
+                $plan.Kind = 'SameRow'; $plan.Below = "$($upper.Lane)|$($upper.Row + 1)"
+            } elseif ($sameLane -and $lower.Row -eq $upper.Row + 1) {
+                $plan.Kind = 'NextRow'; $plan.Below = "$($upper.Lane)|$($lower.Row)"
+            } else {
+                $plan.Kind = 'Gutter'; $plan.Below = "$($upper.Lane)|$($upper.Row + 1)"; $plan.Above = "$($lower.Lane)|$($lower.Row)"
+                # The inner gutter beside the lower card that is nearest both cards.
+                $plan.Gutter = @(@($lower.Column, ($lower.Column + 1)) | Where-Object { $_ -ge 1 -and $_ -le $Columns - 1 } |
+                    Sort-Object { [math]::Abs($_ - ($upper.Column + 0.5)) + [math]::Abs($_ - ($lower.Column + 0.5)) }, { $_ })[0]
+            }
+        }
+        foreach ($gap in @($plan.Below, $plan.Above)) { if ($gap) { $horizontalTracks[$gap] = 1 + [int]$horizontalTracks[$gap] } }
+        if ($plan.Gutter -gt 0) { $verticalTracks[$plan.Gutter] = 1 + [int]$verticalTracks[$plan.Gutter] }
+        $plans.Add($plan)
+    }
+    return [pscustomobject]@{ Plans = $plans.ToArray(); HorizontalTracks = $horizontalTracks; VerticalTracks = $verticalTracks }
+}
+
+function Get-OverviewLayout {
+    param([object]$Placement, [hashtable]$HorizontalTracks = @{}, [hashtable]$VerticalTracks = @{})
+
+    # Card positions and lane sizes, relative to each lane. Gap "lane|r" lies above row r and
+    # gap "lane|rows" below the last row. A gap with lines is tall enough for one track
+    # every 12 px, and never smaller than without lines; the gutters between columns widen
+    # the same way when one has to carry more than eight lines.
+    $cardWidth = 290; $cardHeight = 82; $margin = 50
+    $mostVertical = [int](@(@($VerticalTracks.Values) + 0) | Measure-Object -Maximum).Maximum
+    $pitch = $cardWidth + [math]::Max(110, 16 + (12 * $mostVertical))
+    $laneTop = @{}; $laneHeight = @{}; $gapTop = @{}; $gapHeight = @{}; $rowTop = @{}
+    $y = 110
+    for ($laneIndex = 0; $laneIndex -lt $Placement.Lanes.Count; $laneIndex++) {
+        $rows = $Placement.Lanes[$laneIndex].Rows
+        $laneTop[$laneIndex] = $y
+        $cursor = 48
+        for ($row = 0; $row -le $rows; $row++) {
+            $key = "$laneIndex|$row"
+            $height = if ($row -eq 0) { 10 } elseif ($row -eq $rows) { 30 } else { 23 }
+            $tracks = [int]$HorizontalTracks[$key]
+            if ($tracks -gt 0) { $height = [math]::Max($height, 16 + (12 * $tracks)) }
+            $gapTop[$key] = $cursor; $gapHeight[$key] = $height; $cursor += $height
+            if ($row -lt $rows) { $rowTop[$key] = $cursor; $cursor += $cardHeight }
+        }
+        $laneHeight[$laneIndex] = $cursor
+        $y += $cursor + 25
+    }
+    return [pscustomobject]@{
+        CardWidth = $cardWidth; CardHeight = $cardHeight; Margin = $margin; Pitch = $pitch
+        LaneWidth = (2 * $margin) + (3 * $pitch) + $cardWidth
+        LaneTop = $laneTop; LaneHeight = $laneHeight; GapTop = $gapTop; GapHeight = $gapHeight; RowTop = $rowTop; Bottom = $y
+    }
+}
+
+function Get-OverviewRoute {
+    param([object[]]$Plans, [object]$Placement, [object]$Layout)
+
+    # The ports and bend points of every planned line, in page coordinates and oriented from
+    # the line's source to its target, or from the hub for a trunk line. Lines on one side
+    # of a card are spread along it in the order they head off, so they leave it without
+    # crossing; a straight line or a trunk keeps the centre of its side, and the others
+    # share the halves beside it. Each line takes the next free track, 12 px apart, in every
+    # gap and gutter it runs through; the lines of a trunk share one.
+    $cells = $Placement.CellById
+    $boxById = @{}
+    foreach ($id in $cells.Keys) {
+        $cell = $cells[$id]
+        $boxById[$id] = [pscustomobject]@{ Left = 20 + $Layout.Margin + ($cell.Column * $Layout.Pitch); Top = $Layout.LaneTop[$cell.Lane] + $Layout.RowTop["$($cell.Lane)|$($cell.Row)"] }
+    }
+    $width = $Layout.CardWidth; $height = $Layout.CardHeight
+    $gutterLeft = { param([int]$Gutter) 20 + $Layout.Margin + (($Gutter - 1) * $Layout.Pitch) + $width }
+    $gapTop = { param([string]$Gap) $Layout.LaneTop[[int]($Gap -split '\|')[0]] + $Layout.GapTop[$Gap] }
+
+    $endsBySide = [ordered]@{}
+    $addEnd = {
+        param($Plan, [string]$Role, [string]$Side, [double]$Heading, [bool]$Centre)
+        $cardId = if ($Role -eq 'Upper') { $Plan.Upper } else { $Plan.Lower }
+        $key = "$cardId|$Side"
+        if (-not $endsBySide.Contains($key)) { $endsBySide[$key] = [System.Collections.Generic.List[object]]::new() }
+        $endsBySide[$key].Add([pscustomobject]@{ Plan = $Plan; Role = $Role; Side = $Side; Heading = $Heading; Centre = $Centre; Order = $endsBySide[$key].Count; Offset = 0 })
+    }
+    foreach ($plan in $Plans) {
+        $upper = $boxById[$plan.Upper]; $lower = $boxById[$plan.Lower]
+        $upperCentre = $upper.Left + ($width / 2); $lowerCentre = $lower.Left + ($width / 2)
+        switch ($plan.Kind) {
+            'Side' {
+                $upperSide = if ($upper.Left -lt $lower.Left) { 'right' } else { 'left' }
+                $lowerSide = if ($upperSide -eq 'right') { 'left' } else { 'right' }
+                & $addEnd $plan 'Upper' $upperSide 0 $false; & $addEnd $plan 'Lower' $lowerSide 0 $false
+            }
+            'Straight' { & $addEnd $plan 'Upper' 'bottom' $upperCentre $true; & $addEnd $plan 'Lower' 'top' $lowerCentre $true }
+            'SameRow' { & $addEnd $plan 'Upper' 'bottom' $lowerCentre $false; & $addEnd $plan 'Lower' 'bottom' $upperCentre $false }
+            'NextRow' { & $addEnd $plan 'Upper' 'bottom' $lowerCentre $false; & $addEnd $plan 'Lower' 'top' $upperCentre $false }
+            'Gutter' {
+                $gutterCentre = (& $gutterLeft $plan.Gutter) + (($Layout.Pitch - $width) / 2)
+                & $addEnd $plan 'Upper' 'bottom' $gutterCentre $false; & $addEnd $plan 'Lower' 'top' $gutterCentre $false
+            }
+            'TrunkSameRow' { & $addEnd $plan 'Upper' 'bottom' $upperCentre $true; & $addEnd $plan 'Lower' 'bottom' $upperCentre $false }
+            'TrunkNextRow' { & $addEnd $plan 'Upper' 'bottom' $upperCentre $true; & $addEnd $plan 'Lower' 'top' $upperCentre $false }
+            'Trunk' {
+                $busCentre = (& $gutterLeft $plan.Gutter) + (($Layout.Pitch - $width) / 2)
+                & $addEnd $plan 'Upper' 'bottom' $upperCentre $true; & $addEnd $plan 'Lower' 'top' $busCentre $false
+            }
+        }
+    }
+    $offsetByEnd = @{}
+    foreach ($key in $endsBySide.Keys) {
+        $ends = @($endsBySide[$key])
+        $side = $ends[0].Side
+        if ($side -eq 'left' -or $side -eq 'right') {
+            # Lines between the same two neighbours are listed in the same order on both cards.
+            for ($i = 0; $i -lt $ends.Count; $i++) { $ends[$i].Offset = [math]::Round($height * ($i + 1) / ($ends.Count + 1)) }
+        } else {
+            $cardId = ($key -split '\|')[0]
+            $centre = $boxById[$cardId].Left + ($width / 2)
+            $spread = @($ends | Where-Object { -not $_.Centre } | Sort-Object Heading, Order)
+            if (@($ends | Where-Object { $_.Centre }).Count -gt 0) {
+                foreach ($end in @($ends | Where-Object { $_.Centre })) { $end.Offset = $width / 2 }
+                $leftEnds = @($spread | Where-Object { $_.Heading -lt $centre }); $rightEnds = @($spread | Where-Object { $_.Heading -ge $centre })
+                for ($i = 0; $i -lt $leftEnds.Count; $i++) { $leftEnds[$i].Offset = [math]::Round(($width / 2) * ($i + 1) / ($leftEnds.Count + 1)) }
+                for ($i = 0; $i -lt $rightEnds.Count; $i++) { $rightEnds[$i].Offset = [math]::Round(($width / 2) + (($width / 2) * ($i + 1) / ($rightEnds.Count + 1))) }
+            } else {
+                for ($i = 0; $i -lt $spread.Count; $i++) { $spread[$i].Offset = [math]::Round($width * ($i + 1) / ($spread.Count + 1)) }
+            }
+        }
+        foreach ($end in $ends) { $offsetByEnd["$($end.Plan.Index)|$($end.Role)"] = $end }
+    }
+
+    $horizontalUsed = @{}; $verticalUsed = @{}
+    $nextTrack = { param([hashtable]$Used, [string]$Key) $Used[$Key] = 1 + [int]$Used[$Key]; 4 + (12 * $Used[$Key]) }
+    $sharedTrack = @{}
+    $trunkTrack = {
+        param([hashtable]$Used, [string]$Key, [string]$Shared)
+        if (-not $sharedTrack.ContainsKey($Shared)) { $sharedTrack[$Shared] = & $nextTrack $Used $Key }
+        $sharedTrack[$Shared]
+    }
+    $routes = foreach ($plan in $Plans) {
+        $upperEnd = $offsetByEnd["$($plan.Index)|Upper"]; $lowerEnd = $offsetByEnd["$($plan.Index)|Lower"]
+        $upper = $boxById[$plan.Upper]; $lower = $boxById[$plan.Lower]
+        $anchor = @{}
+        foreach ($end in @($upperEnd, $lowerEnd)) {
+            $box = if ($end.Role -eq 'Upper') { $upper } else { $lower }
+            $anchor[$end.Role] = switch ($end.Side) {
+                'top' { [pscustomobject]@{ FractionX = $end.Offset / $width; FractionY = 0; X = $box.Left + $end.Offset; Y = $box.Top } }
+                'bottom' { [pscustomobject]@{ FractionX = $end.Offset / $width; FractionY = 1; X = $box.Left + $end.Offset; Y = $box.Top + $height } }
+                'left' { [pscustomobject]@{ FractionX = 0; FractionY = $end.Offset / $height; X = $box.Left; Y = $box.Top + $end.Offset } }
+                'right' { [pscustomobject]@{ FractionX = 1; FractionY = $end.Offset / $height; X = $box.Left + $width; Y = $box.Top + $end.Offset } }
+            }
+        }
+        $upperX = $anchor['Upper'].X; $lowerX = $anchor['Lower'].X
+        $points = @()
+        if ($plan.Kind -eq 'SameRow' -or $plan.Kind -eq 'NextRow') {
+            $trackY = (& $gapTop $plan.Below) + (& $nextTrack $horizontalUsed $plan.Below)
+            $points = @(@($upperX, $trackY), @($lowerX, $trackY))
+        } elseif ($plan.Kind -eq 'Gutter') {
+            $belowY = (& $gapTop $plan.Below) + (& $nextTrack $horizontalUsed $plan.Below)
+            $gutterX = (& $gutterLeft $plan.Gutter) + (& $nextTrack $verticalUsed ([string]$plan.Gutter))
+            $aboveY = (& $gapTop $plan.Above) + (& $nextTrack $horizontalUsed $plan.Above)
+            $points = @(@($upperX, $belowY), @($gutterX, $belowY), @($gutterX, $aboveY), @($lowerX, $aboveY))
+        } elseif ($plan.Kind -like 'Trunk*') {
+            # Every line of a trunk follows the same points until it branches off to its card.
+            $belowY = (& $gapTop $plan.Below) + (& $trunkTrack $horizontalUsed $plan.Below "$($plan.Trunk)|$($plan.Below)")
+            if ($plan.Kind -eq 'Trunk') {
+                $busX = (& $gutterLeft $plan.Gutter) + (& $trunkTrack $verticalUsed ([string]$plan.Gutter) "$($plan.Trunk)|gutter")
+                $branchY = (& $gapTop $plan.Above) + (& $trunkTrack $horizontalUsed $plan.Above "$($plan.Trunk)|$($plan.Above)")
+                $points = @(@($upperX, $belowY), @($busX, $belowY), @($busX, $branchY), @($lowerX, $branchY))
+            } else {
+                $points = @(@($upperX, $belowY), @($lowerX, $belowY))
+            }
+        }
+        # Points that repeat the one before or lie on a straight run add no bend; a card right
+        # below its hub, for one, is reached in a single straight run.
+        $path = @(, @($anchor['Upper'].X, $anchor['Upper'].Y)) + $points + @(, @($anchor['Lower'].X, $anchor['Lower'].Y))
+        $kept = [System.Collections.Generic.List[object]]::new(); $kept.Add($path[0])
+        for ($k = 1; $k -lt $path.Count - 1; $k++) {
+            $previous = $kept[$kept.Count - 1]; $current = $path[$k]; $following = $path[$k + 1]
+            $repeats = $current[0] -eq $previous[0] -and $current[1] -eq $previous[1]
+            $straight = ($previous[0] -eq $current[0] -and $current[0] -eq $following[0]) -or ($previous[1] -eq $current[1] -and $current[1] -eq $following[1])
+            if (-not $repeats -and -not $straight) { $kept.Add($current) }
+        }
+        $points = @(for ($k = 1; $k -lt $kept.Count; $k++) { , $kept[$k] })
+        # A trunk line always runs from its hub; the caller swaps its arrowheads to match.
+        $sourceRole = 'Upper'; $targetRole = 'Lower'
+        if ($plan.Line.SourceId -ne $plan.Upper -and -not $plan.Reverse) {
+            $sourceRole = 'Lower'; $targetRole = 'Upper'
+            [array]::Reverse($points)
+        }
+        [pscustomobject]@{
+            Plan = $plan; Exit = $anchor[$sourceRole]; Entry = $anchor[$targetRole]
+            Points = @($points | ForEach-Object { [pscustomobject]@{ X = $_[0]; Y = $_[1] } })
+        }
+    }
+    return @($routes)
+}
+
+function Get-OverviewLine {
+    param([object]$Connection, [hashtable]$NameById)
+
+    # The label, tooltip, and style of one overview line.
+    $sourceName = [string]$NameById[$Connection.SourceId]; $targetName = [string]$NameById[$Connection.TargetId]
+    if ($Connection.Kind -eq 'Peering') {
+        # The line carries an arrowhead for each direction the peering allows. Toward a VNet
+        # outside the export only this side is known, so the way back stays without one.
+        $flow = $Connection.Flow
+        # A connected VNet peering is the normal case and goes unlabelled; a label marks
+        # anything else. One short line each, because neighbouring cards leave only a narrow gap.
+        $labelLines = @()
+        if (-not $flow.Connected) { $labelLines += $(if ($flow.HasReverse -and $flow.RemoteState -ne $flow.LocalState) { "$($flow.LocalState) /<br>$($flow.RemoteState)" } else { $flow.LocalState }) }
+        if ($flow.IsSubnetPeering) { $labelLines += 'subnet<br>peering' }
+        if ($flow.IsOutOfSync) { $labelLines += 'not in sync' }
+        $label = $labelLines -join '<br>'
+        $tooltip = (@("Peering $($flow.LocalName) $([char]0x2194) $($flow.RemoteName)") + @(Get-PeeringFlowDescription $flow)) -join "`n"
+        $lineStyle = Get-PeeringLineStyle $flow
+        $layerKind = 'Peering'
+    } else {
+        $states = @($Connection.States | Where-Object { $_ } | Select-Object -Unique)
+        if ($Connection.Kind -eq 'Vpn') {
+            # Always labelled: a solid line between two VNets would otherwise read as a hub connection.
+            $label = 'VPN' + $(if ($Connection.Established -eq $false) { "<br>$($states -join ' / ')" } elseif ($null -eq $Connection.Established) { '<br>status not reported' } else { '' })
+            $tooltip = @("VNet-to-VNet VPN $sourceName $([char]0x2194) $targetName")
+            for ($nameIndex = 0; $nameIndex -lt $Connection.Names.Count; $nameIndex++) { $tooltip += "Connection $($Connection.Names[$nameIndex]): $($Connection.States[$nameIndex])" }
+            $tooltip = $tooltip -join "`n"
+        } else {
+            $label = if ($Connection.Established -eq $false) { $states -join ' / ' } elseif ($null -eq $Connection.Established) { 'state not reported' } else { '' }
+            $tooltip = @("Virtual WAN connection $($Connection.Names[0])", "$sourceName $([char]0x2194) $targetName", "State: $($Connection.States[0])") -join "`n"
+        }
+        $lineStyle = Get-ConnectionLineStyle -Established $Connection.Established
+        $layerKind = 'Hybrid'
+    }
+    return [pscustomobject]@{
+        Connection = $Connection; SourceId = $Connection.SourceId; TargetId = $Connection.TargetId
+        Label = $label; Tooltip = $tooltip; LineStyle = $lineStyle; LayerKind = $layerKind
+    }
 }
 
 function New-NetworkOverviewPage {
@@ -3300,46 +4966,137 @@ function New-NetworkOverviewPage {
         [System.Xml.XmlDocument]$Document,
         [System.Xml.XmlElement]$MxFile,
         [object]$Data,
+        [object]$Index,
         [object[]]$Vnets,
-        [hashtable]$PageIdByVnetId
+        [hashtable]$PageIdByVnetId,
+        [bool]$IncludeRangesLink = $true,
+        [bool]$IncludeCredit = $true,
+        [string]$CollectedAt = '',
+        [bool]$IsScoped = $false
     )
     $page=New-DrawIoPageRoot $Document $MxFile 'network-overview' 'Network Overview' 1800 1200;$root=$page.Root
-    Add-MxVertex $Document $root 'overview-title' '1' '<b>Azure Network Overview</b><br><font color=''#666666''>Subscriptions, virtual networks, address spaces, regions, and peerings. Click a VNet to open its detailed page.</font>' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;strokeWidth=2;fontSize=15;align=left;spacingLeft=12;' 20 20 1190 65
-    Add-MxVertex $Document $root 'ranges-link' '1' 'Network ranges &#8594;' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;fontSize=13;' 1230 20 230 65 '' '' @{link='data:page/id,network-ranges';tooltip='Open the Network Ranges page: public IP addresses, connected ranges, and subnet prefixes'}
+
+    # The cards: every VNet shown, and the Virtual WAN hubs, all of them in a full export but
+    # only those connected to a selected VNet in a filtered one.
+    $items=[System.Collections.Generic.List[object]]::new()
+    $vnetIds=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach($vnet in $Vnets){
+        $vnetId=ConvertTo-ResourceId(Get-ObjectValue $vnet 'id');$null=$vnetIds.Add($vnetId)
+        $items.Add([pscustomobject]@{Id=$vnetId;Name=[string](Get-ObjectValue $vnet 'name' '(unnamed VNet)');Kind='VNet';Row=$vnet;SubscriptionId=ConvertTo-ResourceId(Get-ObjectValue $vnet 'subscriptionId' '');WanId=''})
+    }
+    $connectedHubIds=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach($hubConnection in $Index.HubConnections){if($vnetIds.Contains((ConvertTo-ResourceId(Get-ObjectValue $hubConnection 'remoteVnetId' '')))){$null=$connectedHubIds.Add((ConvertTo-ResourceId(Get-ObjectValue $hubConnection 'virtualHubId' '')))}}
+    foreach($hub in Get-DataRows $Data 'virtualHubs'){
+        $hubId=ConvertTo-ResourceId(Get-ObjectValue $hub 'id');if(-not $hubId -or ($IsScoped -and -not $connectedHubIds.Contains($hubId))){continue}
+        $items.Add([pscustomobject]@{Id=$hubId;Name=[string](Get-ObjectValue $hub 'name' (Get-ResourceNameFromId $hubId));Kind='Hub';Row=$hub;SubscriptionId=ConvertTo-ResourceId(Get-ObjectValue $hub 'subscriptionId' '');WanId=ConvertTo-ResourceId(Get-ObjectValue $hub 'virtualWanId' '')})
+    }
+    $shownIds=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach($item in $items){$null=$shownIds.Add($item.Id)}
+    $connectionData=Get-OverviewConnection -Data $Data -Index $Index -ShownIds $shownIds
+    $connections=@($connectionData.Connections)
+    $statistics=Get-OverviewStatistic -Items $items -Index $Index -Connections $connections
     $subscriptionNames=@{};foreach($subscription in Get-DataRows $Data 'subscriptions'){$subscriptionNames[(ConvertTo-ResourceId(Get-ObjectValue $subscription 'subscriptionId'))]=[string](Get-ObjectValue $subscription 'subscriptionName' '')}
-    $groups=@($Vnets|Sort-Object subscriptionId,name|Group-Object{ConvertTo-ResourceId(Get-ObjectValue $_ 'subscriptionId')}|Sort-Object Name);$vnetCellById=@{};$vnetPositionById=@{};$currentY=110;$subscriptionIndex=0
-    foreach($group in $groups){$subscriptionIndex++;$subscriptionId=[string]$group.Name;$subscriptionName=if($subscriptionNames.ContainsKey($subscriptionId)){$subscriptionNames[$subscriptionId]}else{''};$heading=if($subscriptionName){"<b>$subscriptionName</b><br><font color='#666666'>$subscriptionId</font>"}else{"<b>Subscription</b><br><font color='#666666'>$subscriptionId</font>"};$columns=4;$rows=[math]::Ceiling($group.Count/[double]$columns);$laneHeight=65+($rows*105);$laneId="subscription-$subscriptionIndex";Add-MxVertex $Document $root $laneId '1' $heading 'swimlane;html=1;rounded=1;startSize=48;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=11;align=left;' 20 $currentY 1440 $laneHeight '' 'Microsoft.Resources/subscriptions' @{azureSubscriptionId=$subscriptionId;tags=(Join-ShapeTag @('subscription',$subscriptionName));tooltip=$(if($subscriptionName){"$subscriptionName`n$subscriptionId"}else{$subscriptionId})}
-        $i=0;foreach($vnet in @($group.Group|Sort-Object name)){$vnetId=ConvertTo-ResourceId(Get-ObjectValue $vnet 'id');$name=[string](Get-ObjectValue $vnet 'name' '(unnamed VNet)');$address=ConvertTo-DisplayList(Get-ObjectValue $vnet 'addressPrefixes' '');$location=[string](Get-ObjectValue $vnet 'location' '');$resourceGroup=[string](Get-ObjectValue $vnet 'resourceGroup' '');$cellId="overview-vnet-$subscriptionIndex-$($i+1)";$vnetCellById[$vnetId]=$cellId;$x=20+(($i%$columns)*350);$y=58+([math]::Floor($i/$columns)*105);$vnetPositionById[$vnetId]=[pscustomobject]@{X=20+$x+162;Y=$currentY+$y+41};$attributes=@{tooltip=$vnetId;tags=(Join-ShapeTag @('vnet',$name,$location))};if($PageIdByVnetId.ContainsKey($vnetId)){$attributes.link="data:page/id,$($PageIdByVnetId[$vnetId])"};$label="<b>$name</b><br><font color='#777777'><i>Virtual network</i></font><br>$address<br><font color='#666666'>$location | $resourceGroup</font>";Add-MxVertex $Document $root $cellId $laneId $label (Get-AzureNodeStyle 'VNet' '#ffffff' '#0078d4') $x $y 325 82 $vnetId 'Microsoft.Network/virtualNetworks' $attributes;$i++};$currentY+=$laneHeight+25
-    }
-    # Resolve which peerings actually render before drawing, so the layer that
-    # holds them can be created ahead of the edges that reference it.
-    $peeringPairs=[System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    $renderablePeerings=[System.Collections.Generic.List[object]]::new()
-    foreach($peering in Get-DataRows $Data 'vnetPeerings'){
-        $source=ConvertTo-ResourceId(Get-ObjectValue $peering 'vnetId');$target=ConvertTo-ResourceId(Get-ObjectValue $peering 'remoteVnetId')
-        if(-not$vnetCellById.ContainsKey($source)-or-not$vnetCellById.ContainsKey($target)){continue}
-        $ordered=@($source,$target)|Sort-Object;$key="$($ordered[0])|$($ordered[1])";if(-not$peeringPairs.Add($key)){continue}
-        $renderablePeerings.Add([pscustomobject]@{Peering=$peering;Source=$source;Target=$target})
-    }
-    $peeringKinds=@();if($renderablePeerings.Count -gt 0){$peeringKinds=@('Peering')}
-    $layerIdByKind=Add-MxPageLayer $Document $root $page.BaseCell $peeringKinds
-    $peeringLayerId=if($layerIdByKind.ContainsKey('Peering')){[string]$layerIdByKind['Peering']}else{'1'}
-    $edgeNumber=0
-    foreach($renderable in $renderablePeerings){
-        $peering=$renderable.Peering;$source=$renderable.Source;$target=$renderable.Target
-        $edgeNumber++;$state=[string](Get-ObjectValue $peering 'state' '')
-        $sourcePosition=$vnetPositionById[$source];$targetPosition=$vnetPositionById[$target]
-        $style='edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=20;html=1;dashed=1;dashPattern=8 4;strokeColor=#9673a6;strokeWidth=2;fontSize=9;jumpStyle=arc;jumpSize=8;labelBackgroundColor=#ffffff;sourcePerimeterSpacing=4;targetPerimeterSpacing=4;'
-        if([math]::Abs($targetPosition.X-$sourcePosition.X)-ge[math]::Abs($targetPosition.Y-$sourcePosition.Y)){
-            if($targetPosition.X-ge$sourcePosition.X){$style+='exitX=1;exitY=0.5;entryX=0;entryY=0.5;'}else{$style+='exitX=0;exitY=0.5;entryX=1;entryY=0.5;'}
+    $oneSidedByRemoteId=@{}
+    foreach($peering in Get-DataRows $Data 'vnetPeerings'){$flow=Get-PeeringFlow $Index $peering;if(-not $flow.HasReverse){Add-IndexValue $oneSidedByRemoteId $flow.RemoteId $flow}}
+
+    # One lane per subscription, then a last one for the connected VNets that have no card of
+    # their own. Every card is placed and every line planned before anything is drawn, since
+    # the lanes are sized to the lines that run through them.
+    $nameById=@{};foreach($item in $items){$nameById[$item.Id]=$item.Name}
+    $outsideItems=@(Get-OverviewOutsideItem -Index $Index -Connections $connections -ShownIds $shownIds -NameById $nameById)
+    foreach($item in $outsideItems){$nameById[$item.Id]=$item.Name}
+    $lanes=@(foreach($group in @($items|Sort-Object SubscriptionId,Name|Group-Object SubscriptionId|Sort-Object Name)){[pscustomobject]@{SubscriptionId=[string]$group.Name;IsOutside=$false;Items=@($group.Group)}})
+    if($outsideItems.Count -gt 0){$lanes+=[pscustomobject]@{SubscriptionId='';IsOutside=$true;Items=$outsideItems}}
+    $lines=@($connections|Where-Object{$nameById.ContainsKey($_.SourceId) -and $nameById.ContainsKey($_.TargetId)}|ForEach-Object{Get-OverviewLine -Connection $_ -NameById $nameById})
+    $placement=Get-OverviewPlacement -Lanes $lanes -Connections $connections -Columns 4
+    $routePlan=Get-OverviewRoutePlan -Placement $placement -Lines $lines -Columns 4
+    $layout=Get-OverviewLayout -Placement $placement -HorizontalTracks $routePlan.HorizontalTracks -VerticalTracks $routePlan.VerticalTracks
+    $routes=@(Get-OverviewRoute -Plans $routePlan.Plans -Placement $placement -Layout $layout)
+    $laneWidth=$layout.LaneWidth
+
+    # Without a Network Ranges page there is nothing to link to, so the title takes the full width.
+    $titleWidth=if($IncludeRangesLink){$laneWidth-250}else{$laneWidth}
+    $collectedNote=if($CollectedAt){" &nbsp;&#183;&nbsp; Data collected $CollectedAt"}else{''}
+    Add-MxVertex $Document $root 'overview-title' '1' "<b>Azure Network Overview</b><br><font color='#666666'>$(Format-OverviewStatistic $statistics.Total -IncludeSubscriptions)$collectedNote</font>" 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;strokeWidth=2;fontSize=15;align=left;spacingLeft=12;' 20 20 $titleWidth 65
+    if($IncludeRangesLink){Add-MxVertex $Document $root 'ranges-link' '1' 'Network ranges &#8594;' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;fontSize=13;' ($laneWidth-210) 20 230 65 '' '' @{link='data:page/id,network-ranges';tooltip='Open the Network Ranges page: public IP addresses, connected ranges, and subnet prefixes'}}
+
+    $cardCellById=@{};$laneNumber=0;$outsideNumber=0
+    for($laneIndex=0;$laneIndex -lt $placement.Lanes.Count;$laneIndex++){
+        $placedLane=$placement.Lanes[$laneIndex];$laneY=$layout.LaneTop[$laneIndex];$laneHeight=$layout.LaneHeight[$laneIndex]
+        if($placedLane.Lane.IsOutside){
+            $laneId='outside-lane'
+            $subscriptionIds=@($placedLane.Lane.Items|ForEach-Object{if($_.Id -match '^/subscriptions/([^/]+)/'){$Matches[1]}}|Sort-Object -Unique)
+            Add-MxVertex $Document $root $laneId '1' "<b>Connected VNets outside this overview</b><br><font color='#666666'>Known only from their connections</font>" `
+                'swimlane;html=1;rounded=1;startSize=48;fillColor=#f8f9fa;strokeColor=#adb5bd;dashed=1;fontSize=11;align=left;spacingLeft=20;' 20 $laneY $laneWidth $laneHeight '' '' @{tags='outside'}
+            $vnetCount=if($placedLane.Lane.Items.Count -eq 1){'1 VNet'}else{"$($placedLane.Lane.Items.Count) VNets"}
+            $subscriptionCount=if($subscriptionIds.Count -eq 1){'1 subscription'}else{"$($subscriptionIds.Count) subscriptions"}
+            Add-MxVertex $Document $root "$laneId-counts" $laneId "$vnetCount &#183; $subscriptionCount" 'text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#555555;' ($laneWidth-460) 7 440 20
         }else{
-            if($targetPosition.Y-ge$sourcePosition.Y){$style+='exitX=0.5;exitY=1;entryX=0.5;entryY=0;'}else{$style+='exitX=0.5;exitY=0;entryX=0.5;entryY=1;'}
+            $laneNumber++;$laneId="subscription-$laneNumber";$subscriptionId=$placedLane.Lane.SubscriptionId
+            $subscriptionName=if($subscriptionNames.ContainsKey($subscriptionId)){$subscriptionNames[$subscriptionId]}else{''}
+            $heading=if($subscriptionName){"<b>$subscriptionName</b><br><font color='#666666'>$subscriptionId</font>"}else{"<b>Subscription</b><br><font color='#666666'>$subscriptionId</font>"}
+            Add-MxVertex $Document $root $laneId '1' $heading 'swimlane;html=1;rounded=1;startSize=48;fillColor=#f8fbff;strokeColor=#6c8ebf;fontSize=11;align=left;spacingLeft=20;' 20 $laneY $laneWidth $laneHeight '' 'Microsoft.Resources/subscriptions' @{azureSubscriptionId=$subscriptionId;tags=(Join-ShapeTag @('subscription',$subscriptionName));tooltip=$(if($subscriptionName){"$subscriptionName`n$subscriptionId"}else{$subscriptionId})}
+            # The lane's counts sit right-aligned in its header. Lines between lanes cross
+            # headers only in the inner gutters and columns, well left of the text.
+            Add-MxVertex $Document $root "$laneId-counts" $laneId (Format-OverviewStatistic $statistics.BySubscription[$subscriptionId]) 'text;html=1;align=right;verticalAlign=middle;fontSize=11;fontColor=#555555;' ($laneWidth-460) 7 440 20
         }
-        $style+='exitPerimeter=1;entryPerimeter=1;'
-        Add-MxEdge $Document $root "overview-peering-$edgeNumber" $vnetCellById[$source] $vnetCellById[$target] "VNet peering $state" $style -Parent $peeringLayerId
+        foreach($card in $placedLane.Cards){
+            $item=$card.Item
+            $x=$layout.Margin+($card.Column*$layout.Pitch);$y=$layout.RowTop["$laneIndex|$($card.Row)"];$slotNumber=($card.Row*4)+$card.Column+1
+            $location=[string](Get-ObjectValue $item.Row 'location' '');$resourceGroup=[string](Get-ObjectValue $item.Row 'resourceGroup' '')
+            if($item.Kind -eq 'Outside'){
+                $outsideNumber++;$cellId="overview-outside-$outsideNumber"
+                $outsideCard=Get-OverviewOutsideCard -External $item.External -SubscriptionNames $subscriptionNames -NameById $nameById
+                Add-MxVertex $Document $root $cellId $laneId $outsideCard.Label ((Get-AzureNodeStyle $outsideCard.Kind '#ffffff' '#adb5bd')+'dashed=1;') $x $y 290 82 $item.Id 'Microsoft.Network/virtualNetworks' `
+                    @{tooltip=$outsideCard.Tooltip;tags=(Join-ShapeTag @('vnet','outside',$item.Name))}
+            }elseif($item.Kind -eq 'Hub'){
+                $cellId="overview-hub-$laneNumber-$slotNumber"
+                $hubCard=Get-OverviewHubCard -Index $Index -Hub $item.Row -Connections $connections
+                Add-MxVertex $Document $root $cellId $laneId $hubCard.Label (Get-AzureNodeStyle 'VirtualHub' '#ffffff' '#9673a6') $x $y 290 82 $item.Id 'Microsoft.Network/virtualHubs' @{tooltip=$hubCard.Tooltip;tags=(Join-ShapeTag @('hub',$item.Name,$location))}
+            }else{
+                $cellId="overview-vnet-$laneNumber-$slotNumber"
+                $summary=Get-OverviewVnetSummary -Index $Index -VnetId $item.Id -ShownIds $shownIds -OneSidedByRemoteId $oneSidedByRemoteId -Connections $connections -UnresolvedVpnByVnetId $connectionData.UnresolvedVpnByVnetId
+                $subnetCount=@($Index.SubnetsByVnetId[$item.Id]|Where-Object{$null -ne $_}).Count
+                $address=ConvertTo-DisplayList(Get-ObjectValue $item.Row 'addressPrefixes' '')
+                $attributes=@{tooltip=((@($summary.Tooltip)+$item.Id) -join "`n");tags=(Join-ShapeTag @('vnet',$item.Name,$location))}
+                if($PageIdByVnetId.ContainsKey($item.Id)){$attributes.link="data:page/id,$($PageIdByVnetId[$item.Id])"}
+                $label="<b>$($item.Name)</b><br><font color='#777777'><i>Virtual network</i></font><br>$address<br><font color='#666666'>$location | $resourceGroup</font><br>Subnets: $subnetCount &#183; Peerings: $($summary.Count)"
+                Add-MxVertex $Document $root $cellId $laneId $label (Get-AzureNodeStyle 'VNet' '#ffffff' '#0078d4') $x $y 290 82 $item.Id 'Microsoft.Network/virtualNetworks' $attributes
+            }
+            $cardCellById[$item.Id]=$cellId
+        }
     }
-    Add-MxVertex $Document $root 'overview-legend' '1' '<b>Overview legend</b><br>Click a VNet card for details. Dashed purple lines represent VNet peerings.' 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;' 20 ($currentY+5) 1440 48
-    Set-MxPageSize $page.Model 1460 ($currentY+53)
+
+    # The layers that hold the lines must exist before the lines that reference them.
+    $layerKinds=@($lines|ForEach-Object{$_.LayerKind}|Sort-Object -Unique)
+    $layerIdByKind=Add-MxPageLayer $Document $root $page.BaseCell $layerKinds
+    $peeringNumber=0;$connectionNumber=0
+    foreach($route in $routes){
+        $line=$route.Plan.Line
+        if($line.LayerKind -eq 'Peering'){$peeringNumber++;$edgeId="overview-peering-$peeringNumber"}else{$connectionNumber++;$edgeId="overview-connection-$connectionNumber"}
+        $layerId=if($layerIdByKind.ContainsKey($line.LayerKind)){[string]$layerIdByKind[$line.LayerKind]}else{'1'}
+        $anchor="exitX=$([math]::Round($route.Exit.FractionX,6));exitY=$([math]::Round($route.Exit.FractionY,6));entryX=$([math]::Round($route.Entry.FractionX,6));entryY=$([math]::Round($route.Entry.FractionY,6));exitPerimeter=0;entryPerimeter=0;"
+        # A trunk line drawn from its hub carries its arrowheads swapped to match, and no jump
+        # arcs, which would mark every point where the trunk's lines part.
+        $sourceId=$line.SourceId;$targetId=$line.TargetId;$lineStyle=$line.LineStyle;$jumps='jumpStyle=arc;jumpSize=8;'
+        if($route.Plan.Reverse){$sourceId=$line.TargetId;$targetId=$line.SourceId;$lineStyle=Get-ReversedLineStyle $line.LineStyle}
+        if($route.Plan.Trunk){$jumps=''}
+        # draw.io follows the bend points exactly, and Clear Waypoints hands a line back to its
+        # own orthogonal routing, for instance after cards were moved.
+        $style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;$($lineStyle)fontSize=9;$($jumps)labelBackgroundColor=#ffffff;$anchor"
+        Add-MxEdge $Document $root $edgeId $cardCellById[$sourceId] $cardCellById[$targetId] $line.Label $style '' '' @{tooltip=$line.Tooltip} -Parent $layerId -Points $route.Points
+    }
+    # Each sentence stays short of the credit, which sits right-aligned on the same lines.
+    $currentY=$layout.Bottom
+    Add-MxVertex $Document $root 'overview-legend' '1' ('<b>Overview legend</b><br>Click a VNet card for details. Dashed purple lines are VNet peerings; solid purple lines are Virtual WAN hub connections and VNet-to-VNet VPNs. A hub''s many lines share one trunk that branches off to each VNet.' +
+        '<br>Arrowheads show the directions traffic may flow; red lines are not connected. Labels mark subnet peerings and other exceptions. NSGs, routes, and firewalls are not evaluated.') 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;' 20 ($currentY+5) $laneWidth 62
+    # draw.io replaces the mxfile origin attributes when it saves, so the tool also
+    # names itself visibly, right-aligned inside the legend.
+    if($IncludeCredit){
+        $credit="Created with <b>VNetAtlas</b> $script:VNetAtlasVersion &nbsp;&#183;&nbsp; $($script:VNetAtlasProjectUrl -replace '^https://','')"
+        Add-MxVertex $Document $root 'vnetatlas-credit' '1' $credit 'text;html=1;align=right;verticalAlign=middle;fontSize=10;fontColor=#555555;' ($laneWidth-400) ($currentY+26) 410 20 '' '' @{link=$script:VNetAtlasProjectUrl;tooltip='Open the VNetAtlas project page'}
+    }
+    Set-MxPageSize $page.Model (20+$laneWidth) ($currentY+67)
 }
 
 function Get-JsonPropertyList {
@@ -3407,6 +5164,61 @@ function Add-DetailNavigation {
     Add-MxVertex -Document $Document -Root $Root -Id 'overview-link' -Parent '1' -Value '&#8592; Network overview' -Style 'rounded=1;whiteSpace=wrap;html=1;fillColor=#e6f2ff;strokeColor=#0078d4;fontColor=#0078d4;fontStyle=1;' -X 20 -Y 15 -Width 220 -Height 30 -Attributes @{link='data:page/id,network-overview';tooltip='Open the network overview page'}
 }
 
+function Add-DetailAssociationList {
+    param(
+        [System.Xml.XmlDocument]$Document,
+        [System.Xml.XmlElement]$Root,
+        [object]$Index,
+        [hashtable]$PageIdByVnetId,
+        [object[]]$Associations,
+        [string]$EmptyText,
+        [double]$Width
+    )
+
+    # Associations are grouped by the VNet of their subnet, because subnet names
+    # such as "default" repeat across VNets. Each group links back to its VNet page.
+    # Returns the bottom edge of the list.
+    $boxStyle = 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;'
+    if ($Associations.Count -eq 0) {
+        Add-MxVertex $Document $Root 'associations' '1' "<b>Associations</b><br>$EmptyText" $boxStyle 20 100 $Width 65
+        return 165
+    }
+    $groups = @(foreach ($group in @($Associations | Group-Object {
+        if ([string]$_.SubnetId -match '^(.*/virtualnetworks/[^/]+)/subnets/') { ConvertTo-ResourceId $Matches[1] } else { '' }
+    })) {
+        $vnetId = [string]$group.Name
+        $vnetName = 'Unknown VNet'
+        if ($Index.VnetById.ContainsKey($vnetId)) {
+            $vnetName = [string](Get-ObjectValue $Index.VnetById[$vnetId] 'name' (Get-ResourceNameFromId $vnetId))
+        } elseif ($vnetId) {
+            $vnetName = Get-ResourceNameFromId $vnetId
+        }
+        $lines = @($group.Group | ForEach-Object { [string]$_.Text } | Select-Object -Unique)
+        [pscustomobject]@{ VnetId = $vnetId; Name = $vnetName; Lines = $lines; Height = 12 + (16 * (1 + $lines.Count)) }
+    })
+    $groups = @($groups | Sort-Object Name)
+    $boxHeight = 34 + (($groups | Measure-Object Height -Sum).Sum) + (6 * $groups.Count)
+    Add-MxVertex $Document $Root 'associations' '1' '<b>Associations</b>' $boxStyle 20 100 $Width $boxHeight
+
+    $rowStyle = 'rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;'
+    $y = 128
+    for ($groupIndex = 0; $groupIndex -lt $groups.Count; $groupIndex++) {
+        $group = $groups[$groupIndex]
+        if ($PageIdByVnetId.ContainsKey($group.VnetId)) {
+            $heading = "<font color='#0078d4'><b>$($group.Name)</b> &#8594;</font>"
+            $attributes = @{ link = "data:page/id,$($PageIdByVnetId[$group.VnetId])"; tooltip = 'Open the VNet page' }
+        } else {
+            $heading = "<b>$($group.Name)</b> <font color='#666666'>(no VNet page in this diagram)</font>"
+            $attributes = @{ tooltip = $group.VnetId }
+        }
+        Add-MxVertex -Document $Document -Root $Root -Id "association-vnet-$($groupIndex + 1)" -Parent '1' `
+            -Value "$heading<br>$($group.Lines -join '<br>')" -Style $rowStyle `
+            -X 30 -Y $y -Width ($Width - 20) -Height $group.Height -Attributes $attributes
+        $y += $group.Height + 6
+    }
+    return 100 + $boxHeight
+}
+
 function Add-NsgRuleTable {
     param(
         [System.Xml.XmlDocument]$Document,
@@ -3470,29 +5282,32 @@ function Add-NsgRuleTable {
 }
 
 function New-NsgDetailPage {
-    param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object]$Index,[object]$Nsg,[string]$PageId,[bool]$IncludeDefaultRules = $true)
+    param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object]$Index,[object]$Nsg,[string]$PageId,[bool]$IncludeDefaultRules = $true,[hashtable]$PageIdByVnetId = @{})
     $id=ConvertTo-ResourceId(Get-ObjectValue $Nsg 'id');$name=[string](Get-ObjectValue $Nsg 'name' (Get-ResourceNameFromId $id));$page=New-DrawIoPageRoot $Document $MxFile $PageId "NSG - $name" 1800 1200;$root=$page.Root;Add-DetailNavigation $Document $root
     $customRules=@(ConvertFrom-JsonCollection(Get-ObjectValue $Nsg 'securityRules' ''));foreach($rule in $customRules){$rule|Add-Member -NotePropertyName '_isDefault' -NotePropertyValue $false -Force}
     $defaultRules=@()
     if($IncludeDefaultRules){$defaultRules=@(ConvertFrom-JsonCollection(Get-ObjectValue $Nsg 'defaultSecurityRules' ''));foreach($rule in $defaultRules){$rule|Add-Member -NotePropertyName '_isDefault' -NotePropertyValue $true -Force}}
     $rules=@($customRules+$defaultRules)
     # A missing index entry pipes a single $null, which would render as an empty association.
-    $subnetNames=@($Index.SubnetsByNsgId[$id]|Where-Object{$null-ne$_}|ForEach-Object{"Subnet: $(Get-ObjectValue $_ 'name' '')"}|Sort-Object -Unique)
-    $nicNames=@($Index.NicRowsByNsgId[$id]|Where-Object{$null-ne$_}|ForEach-Object{"NIC: $(Get-ObjectValue $_ 'nicName' '')"}|Sort-Object -Unique)
-    $vmssNames = @()
+    $subnetAssociations=@($Index.SubnetsByNsgId[$id]|Where-Object{$null-ne$_}|ForEach-Object{[pscustomobject]@{SubnetId=[string](Get-ObjectValue $_ 'id' '');Text="Subnet: $(Get-ObjectValue $_ 'name' '')"}}|Sort-Object Text)
+    $nicAssociations=@($Index.NicRowsByNsgId[$id]|Where-Object{$null-ne$_}|ForEach-Object{[pscustomobject]@{SubnetId=[string](Get-ObjectValue $_ 'subnetId' '');Text="NIC: $(Get-ObjectValue $_ 'nicName' '')"}}|Sort-Object Text)
+    $vmssAssociations = @()
     if ($Index.VmssIdsByNsgId.ContainsKey($id)) {
-        $vmssNames = @(@(foreach ($scaleSetIdValue in $Index.VmssIdsByNsgId[$id]) {
+        # A scale set spanning several subnets is listed under each of their VNets.
+        $vmssAssociations = @(@(foreach ($scaleSetIdValue in $Index.VmssIdsByNsgId[$id]) {
             $scaleSetId = [string]$scaleSetIdValue
             if ($Index.VmssRelationById.ContainsKey($scaleSetId)) {
                 $vmssRelation = $Index.VmssRelationById[$scaleSetId]
-                "VMSS: $(Get-ObjectValue $vmssRelation.ScaleSet 'name' '')"
+                foreach ($subnetId in @($vmssRelation.SubnetIds)) {
+                    [pscustomobject]@{SubnetId=[string]$subnetId;Text="VMSS: $(Get-ObjectValue $vmssRelation.ScaleSet 'name' '')"}
+                }
             }
-        }) | Sort-Object -Unique)
+        }) | Sort-Object Text)
     }
-    $associations=@($subnetNames+$nicNames+$vmssNames);if($associations.Count-eq0){$associations=@('No NIC, VMSS, or subnet associations found')}
     $title="<b>$name</b><br><font color='#666666'>Network Security Group | $(Get-ObjectValue $Nsg 'resourceGroup' '') | $(Get-ObjectValue $Nsg 'location' '')</font>";Add-MxVertex $Document $root 'detail-title' '1' $title (Get-AzureNodeStyle 'NSG' '#fffaf0' '#d6b656') 270 15 720 62 $id 'Microsoft.Network/networkSecurityGroups' @{tooltip=$id;tags=(Join-ShapeTag @('nsg','detail',$name))}
-    Add-MxVertex $Document $root 'associations' '1' "<b>Associations</b><br>$($associations-join'<br>')" 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;' 20 100 1440 ([math]::Max(65,35+($associations.Count*18)))
-    $tableY=190+([math]::Max(0,($associations.Count-1)*18))
+    $associationsBottom=Add-DetailAssociationList -Document $Document -Root $root -Index $Index -PageIdByVnetId $PageIdByVnetId `
+        -Associations @($subnetAssociations+$nicAssociations+$vmssAssociations) -EmptyText 'No NIC, VMSS, or subnet associations found' -Width 1440
+    $tableY=$associationsBottom+25
     $inboundRules=@($rules|Where-Object{[string](Get-ObjectValue (Get-ObjectValue $_ 'properties' $_) 'direction' '')-ieq'Inbound'})
     $outboundRules=@($rules|Where-Object{[string](Get-ObjectValue (Get-ObjectValue $_ 'properties' $_) 'direction' '')-ieq'Outbound'})
     $nextY=Add-NsgRuleTable -Document $Document -Root $root -Rules $inboundRules -Direction 'Inbound' -IdPrefix 'inbound' -StartY $tableY
@@ -3501,17 +5316,20 @@ function New-NsgDetailPage {
 }
 
 function New-RouteTableDetailPage {
-    param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object]$Index,[object]$RouteTable,[string]$PageId)
+    param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object]$Index,[object]$RouteTable,[string]$PageId,[hashtable]$PageIdByVnetId = @{})
     # A missing index entry pipes a single $null, and single-prefix subnets report an empty
     # addressPrefixes string rather than null, so fall back to addressPrefix explicitly.
     $id=ConvertTo-ResourceId(Get-ObjectValue $RouteTable 'id');$name=[string](Get-ObjectValue $RouteTable 'name' (Get-ResourceNameFromId $id));$page=New-DrawIoPageRoot $Document $MxFile $PageId "Routes - $name" 1800 1200;$root=$page.Root;Add-DetailNavigation $Document $root;$routes=@(ConvertFrom-JsonCollection(Get-ObjectValue $RouteTable 'routes' ''))
     $associations=@($Index.SubnetsByRouteTableId[$id]|Where-Object{$null-ne$_}|ForEach-Object{
         $subnetPrefix=ConvertTo-DisplayList (Get-ObjectValue $_ 'addressPrefixes' '')
         if(-not$subnetPrefix){$subnetPrefix=[string](Get-ObjectValue $_ 'addressPrefix' '')}
-        if($subnetPrefix){"Subnet: $(Get-ObjectValue $_ 'name' '') ($subnetPrefix)"}else{"Subnet: $(Get-ObjectValue $_ 'name' '')"}
-    }|Sort-Object -Unique);if($associations.Count-eq0){$associations=@('No subnet associations found')}
-    $title="<b>$name</b><br><font color='#666666'>Route table | $(Get-ObjectValue $RouteTable 'resourceGroup' '') | BGP propagation disabled: $(Get-ObjectValue $RouteTable 'disableBgpRoutePropagation' $false)</font>";Add-MxVertex $Document $root 'detail-title' '1' $title (Get-AzureNodeStyle 'RouteTable' '#fffaf0' '#d6b656') 270 15 720 62 $id 'Microsoft.Network/routeTables' @{tooltip=$id;tags=(Join-ShapeTag @('routetable','detail',$name))};Add-MxVertex $Document $root 'associations' '1' "<b>Associations</b><br>$($associations-join'<br>')" 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=8;verticalAlign=top;' 20 100 1200 ([math]::Max(65,35+($associations.Count*18)))
-    $columns=@(@{Name='Route name';Width=340},@{Name='Address prefix';Width=300},@{Name='Next hop type';Width=260},@{Name='Next hop IP address';Width=300});$tableY=190+([math]::Max(0,($associations.Count-1)*18));$x=20;$columnX=@();for($i=0;$i-lt$columns.Count;$i++){$columnX+=$x;Add-DetailTableCell $Document $root "header-$i" $columns[$i].Name $x $tableY $columns[$i].Width 34 -Header;$x+=$columns[$i].Width}
+        $text=if($subnetPrefix){"Subnet: $(Get-ObjectValue $_ 'name' '') ($subnetPrefix)"}else{"Subnet: $(Get-ObjectValue $_ 'name' '')"}
+        [pscustomobject]@{SubnetId=[string](Get-ObjectValue $_ 'id' '');Text=$text}
+    }|Sort-Object Text)
+    $title="<b>$name</b><br><font color='#666666'>Route table | $(Get-ObjectValue $RouteTable 'resourceGroup' '') | BGP propagation disabled: $(if((ConvertTo-NullableBoolean (Get-ObjectValue $RouteTable 'disableBgpRoutePropagation')) -eq $true){'True'}else{'False'})</font>";Add-MxVertex $Document $root 'detail-title' '1' $title (Get-AzureNodeStyle 'RouteTable' '#fffaf0' '#d6b656') 270 15 720 62 $id 'Microsoft.Network/routeTables' @{tooltip=$id;tags=(Join-ShapeTag @('routetable','detail',$name))}
+    $associationsBottom=Add-DetailAssociationList -Document $Document -Root $root -Index $Index -PageIdByVnetId $PageIdByVnetId `
+        -Associations $associations -EmptyText 'No subnet associations found' -Width 1200
+    $columns=@(@{Name='Route name';Width=340},@{Name='Address prefix';Width=300},@{Name='Next hop type';Width=260},@{Name='Next hop IP address';Width=300});$tableY=$associationsBottom+25;$x=20;$columnX=@();for($i=0;$i-lt$columns.Count;$i++){$columnX+=$x;Add-DetailTableCell $Document $root "header-$i" $columns[$i].Name $x $tableY $columns[$i].Width 34 -Header;$x+=$columns[$i].Width}
     if($routes.Count-eq0){Add-MxVertex $Document $root 'no-routes' '1' 'No custom routes.' 'rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b3b3b3;fontSize=10;' 20 ($tableY+34) ($x-20) 45;Set-MxPageSize $page.Model 1220 ($tableY+79);return}
     $row=0;foreach($route in @($routes|Sort-Object name)){$properties=Get-ObjectValue $route 'properties' $route;$values=@([string](Get-ObjectValue $route 'name' ''),[string](Get-ObjectValue $properties 'addressPrefix' ''),[string](Get-ObjectValue $properties 'nextHopType' ''),[string](Get-ObjectValue $properties 'nextHopIpAddress' ''));$y=$tableY+34+($row*48);for($i=0;$i-lt$columns.Count;$i++){Add-DetailTableCell $Document $root "route-$row-$i" $values[$i] $columnX[$i] $y $columns[$i].Width 48};$row++}
     Set-MxPageSize $page.Model 1220 ($tableY+34+($row*48))
@@ -3959,13 +5777,14 @@ function Get-NetworkRangeData {
             $source = [pscustomobject]@{ subscriptionId=$Matches[1]; resourceGroup=$Matches[2]; location='' }
         }
         $states = @(Select-UniqueValue @($peerings | ForEach-Object { Get-ObjectValue $_ 'state' '' }))
+        $isSubnetPeering = @($peerings | Where-Object { (ConvertTo-NullableBoolean (Get-ObjectValue $_ 'peerCompleteVnets')) -eq $false }).Count -gt 0
         $scopeNote = if ($null -ne $remoteVnet) { 'Outside the selected VNets' } else { 'Not in this export' }
         $remoteSubscriptionId = [string](Get-ObjectValue $source 'subscriptionId' '')
         $placement = ConvertTo-RangePlacement -VnetIds @($peerings | ForEach-Object { ConvertTo-ResourceId (Get-ObjectValue $_ 'vnetId' '') }) `
             -VnetById $Index.VnetById
         $connectedRanges.Add((New-ConnectedRangeRow -Category 'PeeredVnet' -Type (Get-FriendlyResourceType 'RemoteVNet' '' '') `
             -Name ([string](Get-ObjectValue $remoteVnet 'name' (Get-ResourceNameFromId $remoteId))) -Prefixes $prefixes `
-            -Detail @($(if ($states.Count -gt 0) { "Peering $($states -join ', ')" }), $scopeNote,
+            -Detail @($(if ($states.Count -gt 0) { "Peering $($states -join ', ')" }), $(if ($isSubnetPeering) { 'Subnet peering' }), $scopeNote,
                 $(if ($remoteSubscriptionId) { "Subscription $remoteSubscriptionId" })) `
             -Placement $placement -Source $source -ResourceId $remoteId -EmptyText 'Not reported'))
     }
@@ -4423,7 +6242,9 @@ function Add-FirewallRuleSection {
         [string]$Title,
         [object[]]$Entries,
         [string]$IdPrefix,
-        [double]$StartY
+        [double]$StartY,
+        [object]$Index,
+        [hashtable]$PageIdByVnetId = @{}
     )
     # Same column order as the NSG rule tables. Firewall rules have no source
     # port, and the priority shown is the collection's, within its group.
@@ -4464,7 +6285,29 @@ function Add-FirewallRuleSection {
         }
         $source=Format-DetailCellList (Get-FirewallRuleEndpointItem $rule @('sourceAddresses') 'sourceIpGroups') $columns[5].Width
         $isDnat=$ruleType-eq'NatRule'
-        $destinationReservedLines=0;if($isDnat){$destinationReservedLines=1}
+        $destinationReservedLines=0;$translatedLine='';$targetOwner=$null;$targetOwnerText='';$targetPageId=''
+        if($isDnat){
+            $translatedAddress=[string](Get-ObjectValue $rule 'translatedAddress' '')
+            $translatedTarget=if($translatedAddress){$translatedAddress}else{[string](Get-ObjectValue $rule 'translatedFqdn' '')}
+            $translatedLine="&#8594; $(ConvertTo-SecurityRuleDisplayValue $translatedTarget):$(ConvertTo-SecurityRuleDisplayValue (Get-ObjectValue $rule 'translatedPort' ''))"
+            # The translated IP is named after the resource holding it, so a service
+            # published through the firewall can be traced to its VNet page.
+            if($Index -and $translatedAddress){$targetOwner=Resolve-PrivateIpOwner $Index $translatedAddress}
+            if($targetOwner){
+                $targetOwnerText=$targetOwner.Name
+                if($targetOwner.VnetId){
+                    $targetVnetName=if($Index.VnetById.ContainsKey($targetOwner.VnetId)){[string](Get-ObjectValue $Index.VnetById[$targetOwner.VnetId] 'name' (Get-ResourceNameFromId $targetOwner.VnetId))}else{Get-ResourceNameFromId $targetOwner.VnetId}
+                    $targetOwnerText+=" in $targetVnetName"
+                    if($PageIdByVnetId.ContainsKey($targetOwner.VnetId)){$targetPageId=$PageIdByVnetId[$targetOwner.VnetId]}
+                }
+                $ownerMarkup=if($targetPageId){"<font color='#0078d4'>$targetOwnerText</font>"}else{$targetOwnerText}
+                $translatedLine+=" ($ownerMarkup)"
+            }
+            # The translated line takes one line of the fixed-height cell, two when a long
+            # owner name makes it wrap.
+            $plainTranslatedLength=($translatedLine -replace '<[^>]+>','' -replace '&#8594;','>').Length
+            $destinationReservedLines=if($plainTranslatedLength -gt [math]::Floor(($columns[6].Width - 12) / 5.4)){2}else{1}
+        }
         if($ruleType-eq'ApplicationRule'){
             $applicationProtocols=@(@(Get-ObjectValue $rule 'protocols' @())|Where-Object{$null-ne$_})
             $protocol=Format-DetailCellList @($applicationProtocols|ForEach-Object{[string](Get-ObjectValue $_ 'protocolType' '')}) $columns[4].Width
@@ -4476,11 +6319,7 @@ function Add-FirewallRuleSection {
             $destination=Format-DetailCellList (Get-FirewallRuleEndpointItem $rule @('destinationAddresses','destinationFqdns') 'destinationIpGroups') $columns[6].Width $destinationReservedLines
         }
         $destinationText=$destination.Text
-        if($isDnat){
-            $translatedTarget=[string](Get-ObjectValue $rule 'translatedAddress' '')
-            if(-not$translatedTarget){$translatedTarget=[string](Get-ObjectValue $rule 'translatedFqdn' '')}
-            $destinationText+="<br>&#8594; $(ConvertTo-SecurityRuleDisplayValue $translatedTarget):$(ConvertTo-SecurityRuleDisplayValue (Get-ObjectValue $rule 'translatedPort' ''))"
-        }
+        if($isDnat){$destinationText+="<br>$translatedLine"}
         $actionLabel=if($action-ieq'Allow'){"$([char]0x2713) ALLOW"}elseif($action-ieq'Deny'){"$([char]0x2715) DENY"}else{(ConvertTo-SecurityRuleDisplayValue $action).ToUpperInvariant()}
         $actionStyle=if($action-ieq'Allow'){'rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontColor=#107c10;fontStyle=1;fontSize=10;align=center;'}elseif($action-ieq'Deny'){'rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontColor=#b91c1c;fontStyle=1;fontSize=10;align=center;'}else{'rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1;fontSize=10;align=center;'}
         $values=@($collectionPriority,$collectionName,$ruleName,$ports.Text,$protocol.Text,$source.Text,$destinationText,$actionLabel)
@@ -4491,6 +6330,11 @@ function Add-FirewallRuleSection {
             $cellAttributes=@{}
             if(-not[string]::IsNullOrWhiteSpace($description)){$cellAttributes.tooltip=$description}
             if($fullTextByColumn.ContainsKey($i)-and$fullTextByColumn[$i].Truncated){$cellAttributes.tooltip=$fullTextByColumn[$i].FullText}
+            if($i-eq6-and$targetOwner){
+                $ownerNote="$translatedAddress is $targetOwnerText"
+                if($targetPageId){$cellAttributes.link="data:page/id,$targetPageId";$ownerNote+=". Click to open its VNet page."}
+                $cellAttributes.tooltip=if($cellAttributes.ContainsKey('tooltip')){"$($cellAttributes.tooltip)`n$ownerNote"}else{$ownerNote}
+            }
             if($i-eq($columns.Count-1)){
                 Add-DetailTableCell $Document $Root "$IdPrefix-rule-$row-$i" $values[$i] $columnX[$i] $y $columns[$i].Width 54 -StyleOverride $actionStyle -Attributes $cellAttributes
             }elseif($entry.InheritedFrom){
@@ -4535,7 +6379,7 @@ function Get-FirewallPolicyRuleEntry {
 }
 
 function New-FirewallPolicyDetailPage {
-    param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object]$Index,[object]$Policy,[string]$PageId,[hashtable]$DetailPageIdByResourceId)
+    param([System.Xml.XmlDocument]$Document,[System.Xml.XmlElement]$MxFile,[object]$Index,[object]$Policy,[string]$PageId,[hashtable]$DetailPageIdByResourceId,[hashtable]$PageIdByVnetId = @{})
     $id=ConvertTo-ResourceId(Get-ObjectValue $Policy 'id');$name=[string](Get-ObjectValue $Policy 'name' (Get-ResourceNameFromId $id))
     $page=New-DrawIoPageRoot $Document $MxFile $PageId "Firewall policy - $name" 1800 1200;$root=$page.Root;Add-DetailNavigation $Document $root
     $pageWidth=1440
@@ -4688,13 +6532,13 @@ function New-FirewallPolicyDetailPage {
     foreach($section in $sections){
         $sectionEntries=@($entries|Where-Object{$section.Types-contains$_.Type})
         if($sectionEntries.Count-eq0){continue}
-        $nextY=Add-FirewallRuleSection -Document $Document -Root $root -Title $section.Title -Entries $sectionEntries -IdPrefix $section.Id -StartY $nextY
+        $nextY=Add-FirewallRuleSection -Document $Document -Root $root -Title $section.Title -Entries $sectionEntries -IdPrefix $section.Id -StartY $nextY -Index $Index -PageIdByVnetId $PageIdByVnetId
     }
     # Empty filter collections and rule types this page does not know have no
     # place in the evaluation order, so they are listed last rather than dropped.
     $otherEntries=@($entries|Where-Object{$knownTypes-notcontains$_.Type})
     if($otherEntries.Count-gt0){
-        $nextY=Add-FirewallRuleSection -Document $Document -Root $root -Title 'Other collections' -Entries $otherEntries -IdPrefix 'section-other' -StartY $nextY
+        $nextY=Add-FirewallRuleSection -Document $Document -Root $root -Title 'Other collections' -Entries $otherEntries -IdPrefix 'section-other' -StartY $nextY -Index $Index -PageIdByVnetId $PageIdByVnetId
     }
     Set-MxPageSize $page.Model 1460 $nextY
 }
@@ -4708,6 +6552,9 @@ function Export-DrawIoDocument {
         [bool]$IncludeRuleDetailPages = $true,
         [bool]$IncludeDefaultNsgRules = $true,
         [bool]$IncludeFirewallRules = $true,
+        [bool]$IncludeNetworkRangesPage = $true,
+        [bool]$IncludeUnmappedPage = $true,
+        [bool]$IncludeCredit = $true,
         [ValidateRange(1,4)][int]$ResourcesPerRow = 2,
         [string[]]$VnetName,
         [string[]]$ResourceGroup,
@@ -4802,15 +6649,19 @@ function Export-DrawIoDocument {
     }
     $plannedDetailPages = 0
     if ($IncludeRuleDetailPages) { $plannedDetailPages = $nsgs.Count + $routeTables.Count + $firewallPolicies.Count }
-    $plannedPages = 2 + $sortedVnets.Count + $plannedDetailPages
+    $rangesPageCount = if ($IncludeNetworkRangesPage) { 1 } else { 0 }
+    $plannedPages = 1 + $rangesPageCount + $sortedVnets.Count + $plannedDetailPages
     $builtPages = 0
     Write-StatusProgress 'Building diagram pages' 'Network overview' $builtPages $plannedPages
     # The overview follows the scope filters so it never lists VNets without a page.
-    New-NetworkOverviewPage -Document $document -MxFile $mxFile -Data $Data -Vnets $sortedVnets -PageIdByVnetId $pageIdByVnetId
+    $collectedAt = Format-CollectedAt (Get-ObjectValue $Data 'collectedAt' $null)
+    New-NetworkOverviewPage -Document $document -MxFile $mxFile -Data $Data -Index $networkIndex -Vnets $sortedVnets -PageIdByVnetId $pageIdByVnetId `
+        -IncludeRangesLink $IncludeNetworkRangesPage -IncludeCredit $IncludeCredit -CollectedAt $collectedAt -IsScoped $isScoped
     $builtPages++
     # Created now to keep it second in the file, filled once the VNet pages have
     # recorded which resources they drew.
-    $rangesPage = New-DrawIoPageRoot $document $mxFile 'network-ranges' 'Network Ranges'
+    $rangesPage = $null
+    if ($IncludeNetworkRangesPage) { $rangesPage = New-DrawIoPageRoot $document $mxFile 'network-ranges' 'Network Ranges' }
     $placedVnetIdsByResourceId = @{}
     $usedResourceIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $page = 0
@@ -4821,42 +6672,47 @@ function Export-DrawIoDocument {
         New-EnhancedDrawIoPage -Document $document -MxFile $mxFile -Data $Data -Index $networkIndex -Vnet $vnet `
             -PageIdByVnetId $pageIdByVnetId -DetailPageIdByResourceId $detailPageIdByResourceId `
             -UsedResourceIds $usedResourceIds -ResourcesPerRow $ResourcesPerRow `
-            -PlacedVnetIdsByResourceId $placedVnetIdsByResourceId
+            -PlacedVnetIdsByResourceId $placedVnetIdsByResourceId -CollectedAt $collectedAt
     }
-    Write-StatusProgress 'Building diagram pages' 'Network ranges' $builtPages $plannedPages
+    # The ranges are still collected without their page, because -ExportRangesPath writes them as CSV.
     $networkRanges = Get-NetworkRangeData -Data $Data -Index $networkIndex -Vnets $sortedVnets `
         -PlacedVnetIdsByResourceId $placedVnetIdsByResourceId -IsScoped $isScoped
-    New-NetworkRangesPage -Document $document -Page $rangesPage -Ranges $networkRanges `
-        -PageIdByVnetId $pageIdByVnetId -DetailPageIdByResourceId $detailPageIdByResourceId
-    $builtPages++
+    if ($IncludeNetworkRangesPage) {
+        Write-StatusProgress 'Building diagram pages' 'Network ranges' $builtPages $plannedPages
+        New-NetworkRangesPage -Document $document -Page $rangesPage -Ranges $networkRanges `
+            -PageIdByVnetId $pageIdByVnetId -DetailPageIdByResourceId $detailPageIdByResourceId
+        $builtPages++
+    }
     $detailPages = 0
     if ($IncludeRuleDetailPages) {
         foreach ($nsg in $nsgs) {
             $id = ConvertTo-ResourceId (Get-ObjectValue $nsg 'id')
             Write-StatusProgress 'Building diagram pages' "NSG detail: $(Get-ObjectValue $nsg 'name' '')" $builtPages $plannedPages
-            New-NsgDetailPage -Document $document -MxFile $mxFile -Index $networkIndex -Nsg $nsg -PageId $detailPageIdByResourceId[$id] -IncludeDefaultRules $IncludeDefaultNsgRules
+            New-NsgDetailPage -Document $document -MxFile $mxFile -Index $networkIndex -Nsg $nsg -PageId $detailPageIdByResourceId[$id] -IncludeDefaultRules $IncludeDefaultNsgRules `
+                -PageIdByVnetId $pageIdByVnetId
             $detailPages++; $builtPages++
         }
         foreach ($routeTable in $routeTables) {
             $id = ConvertTo-ResourceId (Get-ObjectValue $routeTable 'id')
             Write-StatusProgress 'Building diagram pages' "Route table detail: $(Get-ObjectValue $routeTable 'name' '')" $builtPages $plannedPages
-            New-RouteTableDetailPage -Document $document -MxFile $mxFile -Index $networkIndex -RouteTable $routeTable -PageId $detailPageIdByResourceId[$id]
+            New-RouteTableDetailPage -Document $document -MxFile $mxFile -Index $networkIndex -RouteTable $routeTable -PageId $detailPageIdByResourceId[$id] `
+                -PageIdByVnetId $pageIdByVnetId
             $detailPages++; $builtPages++
         }
         foreach ($firewallPolicy in $firewallPolicies) {
             $id = ConvertTo-ResourceId (Get-ObjectValue $firewallPolicy 'id')
             Write-StatusProgress 'Building diagram pages' "Firewall policy detail: $(Get-ObjectValue $firewallPolicy 'name' '')" $builtPages $plannedPages
             New-FirewallPolicyDetailPage -Document $document -MxFile $mxFile -Index $networkIndex -Policy $firewallPolicy `
-                -PageId $detailPageIdByResourceId[$id] -DetailPageIdByResourceId $detailPageIdByResourceId
+                -PageId $detailPageIdByResourceId[$id] -DetailPageIdByResourceId $detailPageIdByResourceId -PageIdByVnetId $pageIdByVnetId
             $detailPages++; $builtPages++
         }
     }
     # With a scope filter active, "unmapped" would read as "outside the VNets you
     # selected", which is not what the page means. Skip it rather than mislead.
     $unmappedResources = @()
-    if (-not $isScoped) { $unmappedResources = @(Get-UnmappedResources -Data $Data -UsedResourceIds $usedResourceIds) }
+    if (-not $isScoped -and $IncludeUnmappedPage) { $unmappedResources = @(Get-UnmappedResources -Data $Data -UsedResourceIds $usedResourceIds) }
     $hasUnmappedPage = New-UnmappedDrawIoPage -Document $document -MxFile $mxFile -Resources $unmappedResources -DetailPageIdByResourceId $detailPageIdByResourceId
-    $totalPages = 2 + $page + $detailPages + $(if ($hasUnmappedPage) { 1 } else { 0 })
+    $totalPages = 1 + $rangesPageCount + $page + $detailPages + $(if ($hasUnmappedPage) { 1 } else { 0 })
 
     $resolvedPath = Resolve-LocalFilePath $Path
     $directory = [System.IO.Path]::GetDirectoryName($resolvedPath)
@@ -4867,7 +6723,7 @@ function Export-DrawIoDocument {
     $settings.Indent = $true
     $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
     Complete-StatusProgress 'Building diagram pages'
-    $pageBreakdown = "1 overview + 1 ranges + $page VNet + $detailPages detail"
+    $pageBreakdown = "1 overview$(if ($IncludeNetworkRangesPage) { ' + 1 ranges' }) + $page VNet + $detailPages detail"
     if ($hasUnmappedPage) { $pageBreakdown += ' + 1 unmapped' }
     Write-StatusDetail "$pageBreakdown = $totalPages pages"
 
@@ -4922,6 +6778,9 @@ try {
         -IncludeRuleDetailPages (-not $SkipRuleDetailPages.IsPresent) `
         -IncludeDefaultNsgRules (-not $SkipDefaultNsgRules.IsPresent) `
         -IncludeFirewallRules (-not $SkipFirewallRules.IsPresent) `
+        -IncludeNetworkRangesPage (-not $SkipNetworkRanges.IsPresent) `
+        -IncludeUnmappedPage (-not $SkipUnmappedResources.IsPresent) `
+        -IncludeCredit (-not $SkipCredit.IsPresent) `
         -ResourcesPerRow $ResourcesPerRow `
         -VnetName $VnetName -ResourceGroup $ResourceGroup -ExcludeSubscriptionId $ExcludeSubscriptionId
     if ($ExportRangesPath) {

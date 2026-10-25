@@ -21,41 +21,53 @@ One command produces a single `.drawio` file that reads like an atlas: start wit
 picture and click your way down to the details.
 
 **1. Network overview.** Every VNet, grouped by subscription, with its address space,
-region, and peerings. Click a VNet to open its page.
+region, and subnet and peering counts. Click a VNet to open its page. Lines show peerings,
+Virtual WAN hub connections, and VNet-to-VNet VPNs, with arrowheads for the directions
+traffic may flow; anything unusual is labelled or drawn in red. Connected VNets outside the
+export get a section of their own, and the header shows when the data was read from Azure.
+
+![VNetAtlas Network Overview](assets/vnet_overview.png)
+*Network overview with VNets grouped by subscription and their peerings.*
 
 **2. Network ranges.** The address ranges actually in use, often far smaller than the VNet
 address spaces suggest: public IPs and what they are attached to, connected ranges such as
 on-premises prefixes, VPN client pools and peered VNets, and every subnet grouped by VNet.
 Add `-ExportRangesPath` to get the same rows as CSV for a scan scope.
 
-**3. One page per VNet.** Subnets are drawn as containers holding what lives in them:
-VMs, NICs, scale sets, private endpoints, VNet-injected services such as Container Apps
-environments, and subnet-deployed services such as Application Gateway, Azure Firewall,
-virtual network gateways, and Azure Bastion. Around the VNet, three lanes show what it
-connects to:
+![VNetAtlas Network Ranges](assets/networkranges.png)
+*Network Ranges page with public IP addresses, connected ranges, and subnet prefixes.*
+
+**3. One page per VNet.** Each subnet is a container holding what runs in it: VMs, scale
+sets, private endpoints, and services such as Application Gateway, Azure Firewall,
+gateways, Bastion, or Container Apps. Three lanes around the VNet show what it connects to:
 
 - **Security & routing:** NSGs and route tables
-- **Azure connectivity:** public IPs, NAT gateways, load balancers, and linked Azure
-  resources that attach to or span the VNet
-- **Remote & hybrid:** peered VNets, on-premises gateways, ExpressRoute circuits, and
-  Virtual WAN hubs with the ExpressRoute, VPN, and point-to-site gateways and VPN sites
-  behind them
+- **Azure connectivity:** public IPs, NAT gateways, load balancers, and private endpoint
+  targets
+- **Remote & hybrid:** peered VNets, VPN and ExpressRoute connections, and Virtual WAN hubs
 
-Labels carry the details you would otherwise look up one blade at a time, such as VM size,
-private IPs, public IP SKU and FQDN, subnet delegations, and private endpoint state. Hover
-over any shape to see its Azure resource ID.
+Labels carry what you would otherwise look up blade by blade, such as VM sizes, private
+IPs, routes, and each peering's state and allowed directions. Hover over a shape for its
+resource ID.
 
-![VNetAtlas Subnet View](assets/vnetatlas-overview.png)
+![VNetAtlas VNet View](assets/vnet.png)
 *VNet page showing subnet containment and connected Azure resources.*
 
 **4. NSG and route-table pages.** Click an NSG to see its rules laid out the way the portal
 lists them: inbound and outbound, custom and default, with application security groups
 resolved and each rule's description shown on hover. Route tables get the same treatment.
-Click an Azure Firewall to open its firewall policy page, with every rule collection group,
-collection, and rule.
+On both pages the associations are grouped by VNet, and each VNet links back to its page.
 
-![VNetAtlas NSG View](assets/vnetatlas-nsg.png)
-*NSG detail page showing inbound and outbound security rules.*
+![VNetAtlas NSG View](assets/nsg.png)
+*NSG detail page with its associations and inbound and outbound security rules.*
+
+Click an Azure Firewall to open its firewall policy page, with every rule collection group,
+collection, and rule. DNAT rules name the resource behind each translated address, such as
+an application gateway or VM, and link to its VNet page.
+
+![VNetAtlas Firewall Policy View](assets/azure_firewall.png)
+*Firewall policy page with DNAT, network, and application rules, including rules inherited
+from a parent policy.*
 
 **5. Unmapped Resources.** Anything VNetAtlas found but could not tie to a VNet through a
 relationship Azure actually reports, such as a public IP or an NSG that is not attached to
@@ -69,7 +81,8 @@ with draw.io layers.
 ## Made for reviews
 
 - **Read-only.** VNetAtlas runs Resource Graph queries, plus read-only (`GET`) Azure
-  Resource Manager requests for firewall policy rules. Reader access is enough.
+  Resource Manager requests for firewall policy rules and Virtual WAN hub connections.
+  Reader access is enough.
 - **Focus on what matters.** Narrow large tenants with `-VnetName`, `-ResourceGroup`, or
   `-ExcludeSubscriptionId`.
 
@@ -86,7 +99,8 @@ Connect-AzAccount
 
 The command queries every enabled subscription available in the current tenant and creates
 a timestamped `*_Azure-Network.drawio` file in the current directory. Open it in the draw.io
-desktop application or at [app.diagrams.net](https://app.diagrams.net/).
+desktop application or at [app.diagrams.net](https://app.diagrams.net/); both include the
+Azure icons it uses.
 
 ## Parameters
 
@@ -108,6 +122,9 @@ live; `Input` regenerates a diagram from exported JSON; `Version` and `Help` pri
 | `-SkipRuleDetailPages` | `switch` | both | Omit NSG, route-table, and firewall-policy detail pages. Firewall policy rules are still collected. |
 | `-SkipFirewallRules` | `switch` | both | Do not read firewall policy rules and omit the firewall-policy detail pages. |
 | `-SkipDefaultNsgRules` | `switch` | both | Omit Azure's built-in rules from NSG detail pages. |
+| `-SkipNetworkRanges` | `switch` | both | Omit the Network Ranges page and its link on the overview. `-ExportRangesPath` still writes the CSV. |
+| `-SkipUnmappedResources` | `switch` | both | Omit the Unmapped Resources page. |
+| `-SkipCredit` | `switch` | both | Omit the "Created with VNetAtlas" line from the network overview. |
 | `-Quiet` | `switch` | both | Suppress the banner and progress output. The summary line and warnings are still written. |
 | `-Verbose` | `switch` | Azure | Narrate subscription selection and each Resource Graph query. |
 | `-Version` | `switch` | Version | Print `VNetAtlas <version>` and exit. |
@@ -138,7 +155,8 @@ Export only matching VNets:
 ```
 
 Save the query results as JSON, so you can later rebuild the atlas with different options
-(for example a single VNet or no default NSG rules) without querying Azure again:
+(for example a single VNet or no default NSG rules) without querying Azure again. The
+rebuilt atlas still shows when the data was originally collected:
 
 ```powershell
 .\Export-VNetAtlas.ps1 `
@@ -166,16 +184,17 @@ Relative output and data paths are resolved against PowerShell's current locatio
 
 VNetAtlas currently queries and relates:
 
-- Virtual networks, subnets, and VNet peerings
+- Virtual networks, subnets, and VNet peerings, including subnet peerings
 - VMs, VM scale sets, and network interfaces
-- Public IP addresses and prefixes, NSGs, NAT gateways, and route tables
+- Public IP addresses and prefixes, NSGs, route tables, and NAT gateways with their IPv4 and
+  IPv6 public IPs and prefixes
 - Load balancers and application gateways, including frontend and backend relationships
 - Azure Firewalls and their firewall policies, including parent policies
-- Private endpoints and their target resources
+- Private endpoints, their NICs, and their target resources
 - VPN/ExpressRoute gateways, connections, local gateways, and ExpressRoute circuits
 - Azure Bastion hosts
-- Virtual Hubs, hub VNet connections, and associated ExpressRoute gateways and secured-hub
-  firewalls
+- Virtual Hubs, hub VNet connections, and associated ExpressRoute gateways, with the
+  circuits connected to them, and secured-hub firewalls
 - Virtual WAN VPN gateways and their connections, VPN sites, and point-to-site VPN gateways
 - VPN client address pools on virtual network gateways (Network Ranges page only)
 
@@ -200,14 +219,21 @@ policies that no firewall uses.
 
 ### Scope and limitations
 
-- `-VnetName`, `-ResourceGroup`, and `-ExcludeSubscriptionId` combine with AND and are
-  applied before pages are built.
-- With filters active, the network overview shows only the selected VNets, detail pages
-  include only NSGs, route tables, and firewall policies reachable from them, and the
-  `Unmapped Resources` page is suppressed.
-- If no VNet matches, the script stops without creating an empty diagram.
+- Filters (`-VnetName`, `-ResourceGroup`, `-ExcludeSubscriptionId`) combine with AND. The
+  overview then shows only the selected VNets, detail pages only what those VNets reach,
+  and the `Unmapped Resources` page is left out; if nothing matches, no diagram is written.
 - Private DNS zones, VNet links, record sets, and private-endpoint DNS zone groups are not
   collected.
+- Route tables show the routes configured in them, not the effective routes Azure applies:
+  system routes and routes learned through BGP are not included.
+- Arrowheads show what a peering or connection allows, not whether traffic arrives: NSGs,
+  routes, firewalls, and Virtual WAN hub routing are not evaluated.
+- A VNet outside the export is known only from its connections, so a VNet in another tenant
+  and one in a subscription that was not queried look the same.
+- The peering a Virtual WAN hub creates to its managed `HV_` VNet is shown as the hub
+  connection, not as a second peering.
+- Overview lines keep their bend points when cards are moved in draw.io; Arrange > Clear
+  Waypoints (Alt+Shift+R) routes them again.
 - Azure Resource Graph expands at most 2,000 subnets, peerings, or IP configurations per
   resource. The script warns when a resource reaches that limit.
 
@@ -217,8 +243,12 @@ policies that no firewall uses.
 - Solid green connectors represent attachments, public IPs, and load-balancer backends.
 - Dashed gold connectors represent NSG associations.
 - Dashed blue connectors represent routing and NAT configuration.
-- Dashed purple connectors represent VNet peering; solid purple connectors represent VPN,
-  ExpressRoute, and Virtual WAN hub connectivity.
+- Purple connectors represent peerings (dashed) and VPN, ExpressRoute, and Virtual WAN hub
+  connections (solid). Arrowheads show the directions traffic may flow, red means not
+  connected, and no arrowheads mean Azure reports no state or, from a hub to its gateways,
+  a part of the hub rather than a path.
+- On VNet pages, peering arrowheads at the VNet overlap; each peered VNet's card states the
+  directions in words.
 - Connector classes use separate draw.io layers. Open **View > Layers** (`Ctrl+Shift+L`) to
   show or hide them.
 - Subnets are collapsible, and **View > Tags** can filter shapes by kind, lane, name, or
@@ -226,13 +256,6 @@ policies that no firewall uses.
 - Behind a Virtual WAN VPN gateway, more than five VPN sites are drawn as one summary node
   that lists them on hover; the Network Ranges page lists each site's prefixes.
 - The atlas follows draw.io's light and dark mode.
-
-Azure icons use draw.io's built-in `img/lib/azure2` library and render in the diagrams.net
-web and desktop editors.
-
-NSG detail pages resolve both address-prefix and application-security-group sources and
-destinations. NAT gateway relationships include attached IPv4 and IPv6 public IP addresses
-and public IP prefixes where Azure Resource Graph exposes them.
 
 ## Disclaimer
 
