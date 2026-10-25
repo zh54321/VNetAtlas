@@ -44,7 +44,8 @@ gateways, Bastion, or Container Apps. Three lanes around the VNet show what it c
 - **Security & routing:** NSGs and route tables
 - **Azure connectivity:** public IPs, NAT gateways, load balancers, and private endpoint
   targets
-- **Remote & hybrid:** peered VNets, VPN and ExpressRoute connections, and Virtual WAN hubs
+- **Peerings & gateway connections:** peered VNets, and the far ends of VPN, ExpressRoute,
+  and Virtual WAN hub connections
 
 Labels carry what you would otherwise look up blade by blade, such as VM sizes, private
 IPs, routes, and each peering's state and allowed directions. Hover over a shape for its

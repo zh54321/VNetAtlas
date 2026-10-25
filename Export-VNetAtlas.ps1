@@ -237,7 +237,7 @@ $ErrorActionPreference = 'Stop'
 
 # Date-based version of the exporter (VYYYYMMDD). Surfaced in the banner and
 # stamped into the mxfile so a generated diagram records which build produced it.
-$script:VNetAtlasVersion = 'V20261021'
+$script:VNetAtlasVersion = 'V20261025'
 
 # Linked from the credit on the Network Overview page.
 $script:VNetAtlasProjectUrl = 'https://github.com/zh54321/VNetAtlas'
@@ -1373,7 +1373,7 @@ function Get-ConnectorLayerDefinition {
         [pscustomobject]@{ Kind='Security';      Id='layer-security';      Name='Security (NSG)' },
         [pscustomobject]@{ Kind='Configuration'; Id='layer-configuration'; Name='Routing and NAT' },
         [pscustomobject]@{ Kind='Peering';       Id='layer-peering';       Name='VNet peering' },
-        [pscustomobject]@{ Kind='Hybrid';        Id='layer-hybrid';        Name='Hybrid connectivity' }
+        [pscustomobject]@{ Kind='Hybrid';        Id='layer-hybrid';        Name='Gateway connections' }
     )
 }
 
@@ -2627,7 +2627,7 @@ function Add-PageLegend {
     param([System.Xml.XmlDocument]$Document, [System.Xml.XmlElement]$Root, [double]$Y, [double]$Width = 1320)
     $value = "<b>Legend</b><br><font color='#0078d4'>Azure icon</font> = Azure resource &nbsp; | &nbsp; " +
              "Contained = VNet/subnet membership &nbsp; | &nbsp; Solid line = attachment/backend &nbsp; | &nbsp; " +
-             "Dashed line = security/configuration/peering &nbsp; | &nbsp; Purple line = hybrid connectivity &nbsp; | &nbsp; Click a remote VNet to open its page" +
+             "Dashed line = security/configuration/peering &nbsp; | &nbsp; Purple line = peering or gateway connection &nbsp; | &nbsp; Click a remote VNet to open its page" +
              "<br>Arrowheads on peerings and connections = directions traffic may flow, detailed on the remote VNet for peerings; NSGs, routes, and firewalls are not evaluated &nbsp; | &nbsp; Red = not connected &nbsp; | &nbsp; No arrowheads = configuration, parts of a Virtual WAN hub, or state not reported"
     Add-MxVertex -Document $Document -Root $Root -Id 'legend' -Parent '1' -Value $value `
         -Style 'rounded=1;whiteSpace=wrap;html=1;fillColor=#f8f9fa;strokeColor=#adb5bd;fontSize=10;align=left;spacingLeft=10;' `
@@ -3780,7 +3780,7 @@ function New-EnhancedDrawIoPage {
     foreach($connectionId in $renderedConnectionIds){$null=$hybridResourceIds.Add($connectionId)}
     $hybridCount=$hybridResourceIds.Count
     $bastionCount=@($nodes.Values|Where-Object Kind -eq 'Bastion').Count
-    $summary="<b>VNet inventory</b> &nbsp; Subnets: $($subnets.Count) &nbsp; | &nbsp; Attached resources: $attachedResourceCount &nbsp; | &nbsp; Public IPs: $publicIpCount &nbsp; | &nbsp; NSGs: $nsgCount &nbsp; | &nbsp; Peerings: $peeringCount &nbsp; | &nbsp; Hybrid: $hybridCount &nbsp; | &nbsp; Bastion: $bastionCount"
+    $summary="<b>VNet inventory</b> &nbsp; Subnets: $($subnets.Count) &nbsp; | &nbsp; Attached resources: $attachedResourceCount &nbsp; | &nbsp; Public IPs: $publicIpCount &nbsp; | &nbsp; NSGs: $nsgCount &nbsp; | &nbsp; Peerings: $peeringCount &nbsp; | &nbsp; Gateways &amp; connections: $hybridCount &nbsp; | &nbsp; Bastion: $bastionCount"
     # Repeated from the overview so a single page exported on its own still carries the date.
     if($CollectedAt){$summary+=" &nbsp; | &nbsp; Data collected $CollectedAt"}
     Add-MxVertex $Document $root 'vnet-summary' '1' $summary `
@@ -3802,7 +3802,7 @@ function New-EnhancedDrawIoPage {
         'swimlane;html=1;rounded=1;startSize=38;fillColor=#f2fbf5;strokeColor=#82b366;fontSize=12;' `
         $connectionX $vnetY 250 $laneHeight
     $externalX=$connectionX+290
-    Add-MxVertex $Document $root 'external-lane' '1' '<b>Remote &amp; hybrid</b>' `
+    Add-MxVertex $Document $root 'external-lane' '1' '<b>Peerings &amp; gateway connections</b>' `
         'swimlane;html=1;rounded=1;startSize=38;fillColor=#f8f3fc;strokeColor=#9673a6;fontSize=12;' `
         $externalX $vnetY 280 $laneHeight
 
