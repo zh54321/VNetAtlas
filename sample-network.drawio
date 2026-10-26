@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<mxfile host="VNetAtlas" modified="2026-10-25T20:50:58.0065655Z" agent="Export-VNetAtlas.ps1" version="V20261025" type="device">
+<mxfile host="VNetAtlas" modified="2026-10-26T06:57:20.1035215Z" agent="Export-VNetAtlas.ps1" version="V20261026" type="device">
   <diagram id="network-overview" name="Network Overview">
     <mxGraphModel dx="1422" dy="794" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1630" pageHeight="615" math="0" shadow="0" background="light-dark(#ffffff,#1e1f22)">
       <root>
@@ -101,7 +101,7 @@
         <mxCell id="overview-legend" value="&lt;b&gt;Overview legend&lt;/b&gt;&lt;br&gt;Click a VNet card for details. Dashed purple lines are VNet peerings; solid purple lines are Virtual WAN hub connections and VNet-to-VNet VPNs. A hub's many lines share one trunk that branches off to each VNet.&lt;br&gt;Arrowheads show the directions traffic may flow; red lines are not connected. Labels mark subnet peerings and other exceptions. NSGs, routes, and firewalls are not evaluated." style="rounded=1;whiteSpace=wrap;html=1;fillColor=light-dark(#f8f9fa,#26282c);strokeColor=light-dark(#adb5bd,#4a4f57);fontSize=10;align=left;spacingLeft=10;fontColor=light-dark(#000000,#dcdde0);" vertex="1" parent="1">
           <mxGeometry x="20" y="533" width="1590" height="62" as="geometry" />
         </mxCell>
-        <object id="vnetatlas-credit" label="Created with &lt;b&gt;VNetAtlas&lt;/b&gt; V20261025 &amp;nbsp;&amp;#183;&amp;nbsp; github.com/zh54321/VNetAtlas" link="https://github.com/zh54321/VNetAtlas" tooltip="Open the VNetAtlas project page">
+        <object id="vnetatlas-credit" label="Created with &lt;b&gt;VNetAtlas&lt;/b&gt; V20261026 &amp;nbsp;&amp;#183;&amp;nbsp; github.com/zh54321/VNetAtlas" link="https://github.com/zh54321/VNetAtlas" tooltip="Open the VNetAtlas project page">
           <mxCell style="text;html=1;align=right;verticalAlign=middle;fontSize=10;fontColor=light-dark(#555555,#a0a4aa);" vertex="1" parent="1">
             <mxGeometry x="1190" y="554" width="410" height="20" as="geometry" />
           </mxCell>

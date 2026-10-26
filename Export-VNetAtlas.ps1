@@ -237,7 +237,7 @@ $ErrorActionPreference = 'Stop'
 
 # Date-based version of the exporter (VYYYYMMDD). Surfaced in the banner and
 # stamped into the mxfile so a generated diagram records which build produced it.
-$script:VNetAtlasVersion = 'V20261025'
+$script:VNetAtlasVersion = 'V20261026'
 
 # Linked from the credit on the Network Overview page.
 $script:VNetAtlasProjectUrl = 'https://github.com/zh54321/VNetAtlas'
