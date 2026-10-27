@@ -199,8 +199,8 @@ VNetAtlas currently queries and relates:
 - Virtual WAN VPN gateways and their connections, VPN sites, and point-to-site VPN gateways
 - VPN client address pools on virtual network gateways (Network Ranges page only)
 
-A resource appears on a VNet page only when Azure Resource Graph exposes a subnet, NIC,
-backend, peering, gateway connection, or Virtual WAN hub connection relationship. Other
+A resource appears on a VNet page only when Azure reports a subnet, NIC, backend, peering,
+gateway connection, or Virtual WAN hub connection relationship. Other
 supported resources appear on the `Unmapped Resources` page instead of being assigned by
 inference.
 
